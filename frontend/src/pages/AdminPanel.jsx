@@ -362,11 +362,11 @@ const AdminPanel = () => {
                             <td className="px-4 py-3.5 flex items-center gap-1.5">
                               {name} {isBest && <span className="text-[9px] uppercase bg-blue-100 dark:bg-blue-900/40 text-blue-700 dark:text-blue-300 px-1.5 py-0.5 rounded font-extrabold">Active</span>}
                             </td>
-                            <td className="px-4 py-3.5 font-mono">{(m.accuracy * 100).toFixed(2)}%</td>
-                            <td className="px-4 py-3.5 font-mono">{(m.precision * 100).toFixed(2)}%</td>
-                            <td className="px-4 py-3.5 font-mono">{(m.recall * 100).toFixed(2)}%</td>
-                            <td className="px-4 py-3.5 font-mono">{(m.f1_score * 100).toFixed(2)}%</td>
-                            <td className="px-4 py-3.5 font-mono">{(m.roc_auc).toFixed(4)}</td>
+                            <td className="px-4 py-3.5 font-mono">{m.accuracy != null && !isNaN(m.accuracy) ? (m.accuracy * 100).toFixed(2) + '%' : <span className="text-gray-400" title="Undefined under single-class distribution">N/A</span>}</td>
+                            <td className="px-4 py-3.5 font-mono">{m.precision != null && !isNaN(m.precision) ? (m.precision * 100).toFixed(2) + '%' : <span className="text-gray-400" title="Undefined under single-class distribution">N/A</span>}</td>
+                            <td className="px-4 py-3.5 font-mono">{m.recall != null && !isNaN(m.recall) ? (m.recall * 100).toFixed(2) + '%' : <span className="text-gray-400" title="Undefined under single-class distribution">N/A</span>}</td>
+                            <td className="px-4 py-3.5 font-mono">{m.f1_score != null && !isNaN(m.f1_score) ? (m.f1_score * 100).toFixed(2) + '%' : <span className="text-gray-400" title="Undefined under single-class distribution">N/A</span>}</td>
+                            <td className="px-4 py-3.5 font-mono">{m.roc_auc != null && !isNaN(m.roc_auc) ? Number(m.roc_auc).toFixed(4) : <span className="text-gray-400" title="Undefined under single-class distribution">N/A</span>}</td>
                           </tr>
                         );
                       })}

@@ -1,0 +1,29 @@
+{
+    "version_id": "v_20261013_185857",
+    "model_name": "Random Forest",
+    "created_at": "2026-10-13T18:58:58.136910",
+    "dataset_name": "synthetic",
+    "split_mode": "temporal",
+    "rows_trained": 10500,
+    "feature_count": 28,
+    "pr_auc": 1.0,
+    "roc_auc": 1.0,
+    "f1_score": 1.0,
+    "precision_at_100": 0.28,
+    "brier_score": 2.882296163417904e-05,
+    "optimal_threshold": 0.99,
+    "training_data_hash": "0a49555fddc7cf0ac46bd82974830781ea4c61ba2e6a49793557ec7e63a87bc0",
+    "config_hash": "2b837f3832ec274578075269d107bfeffeef519ce53c82f65474ffd27e53bbc5",
+    "feedback_retraining": {
+        "analyst_labels_ingested": 0,
+        "analyst_label_weight": 3.0,
+        "test_period_labels_excluded": 0,
+        "temporal_split_strictly_preserved": true
+    },
+    "artifacts": {
+        "model": "versions/v_20261013_185857/model.pkl",
+        "scaler": "versions/v_20261013_185857/scaler.pkl",
+        "metrics": "versions/v_20261013_185857/metrics.json",
+        "feature_cols": "versions/v_20261013_185857/feature_cols.json"
+    }
+}

@@ -1,6 +1,6 @@
 const test = require('node:test');
 const assert = require('node:assert');
-const { connectDB, models } = require('../src/config/db');
+const { connectDB, models, mongoose } = require('../src/config/db');
 const { ingestionQueue, InMemoryQueueAdapter } = require('../src/services/ingestionQueue');
 const transactionController = require('../src/controllers/transactionController');
 const alertController = require('../src/controllers/alertController');
@@ -8,6 +8,10 @@ const caseController = require('../src/controllers/caseController');
 
 test.before(async () => {
   await connectDB();
+});
+
+test.after(async () => {
+  await mongoose.disconnect();
 });
 
 test('Performance: FileQuery supports chaining .sort(), .skip(), and .limit()', async () => {
@@ -38,9 +42,12 @@ test('Performance: IngestionQueue manages background jobs and progress', async (
   assert.strictEqual(job.status, 'queued');
 
   // Wait for tick execution
-  await new Promise(r => setTimeout(r, 50));
-
-  const status = await customQueue.getStatus('test_job_101');
+  let status;
+  for (let i = 0; i < 20; i++) {
+    status = await customQueue.getStatus('test_job_101');
+    if (status && status.status === 'completed') break;
+    await new Promise(r => setTimeout(r, 50));
+  }
   assert.strictEqual(status.status, 'completed');
   assert.strictEqual(status.progress_pct, 100);
   assert.strictEqual(status.result.processed, 10);

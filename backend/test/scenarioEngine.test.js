@@ -1,7 +1,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 
-const { connectDB, models, Scenario, Transaction } = require('../src/config/db');
+const { connectDB, models, Scenario, Transaction, mongoose } = require('../src/config/db');
 const {
   BUILTIN_SCENARIOS,
   getActiveScenarios,
@@ -25,6 +25,10 @@ const {
 test.before(async () => {
   await connectDB();
   refreshScenarios();
+});
+
+test.after(async () => {
+  await mongoose.disconnect();
 });
 
 // Helper to create mock HTTP response

@@ -3,7 +3,7 @@ const assert = require('node:assert/strict');
 const fs = require('fs');
 const path = require('path');
 const { app } = require('../server');
-const { connectDB, models } = require('../src/config/db');
+const { connectDB, models, mongoose } = require('../src/config/db');
 
 let server;
 let baseUrl;

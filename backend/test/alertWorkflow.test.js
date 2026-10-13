@@ -1,7 +1,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 
-const { connectDB, models } = require('../src/config/db');
+const { connectDB, models, mongoose } = require('../src/config/db');
 const { 
   generateAlertId, 
   generateCaseId, 
@@ -338,4 +338,10 @@ test('Case Merging: Merges source case into target case, unions alerts, updates 
   const checkB = await models.Case.findOne({ case_id: caseB.case_id });
   assert.equal(checkB.status, 'Closed');
   assert.equal(checkB.merged_into_case_id, caseA.case_id);
+});
+
+test.after(async () => {
+  if (mongoose && mongoose.disconnect) {
+    await mongoose.disconnect();
+  }
 });

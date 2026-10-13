@@ -167,9 +167,10 @@ async function getActiveLearningQueue(options = {}) {
   const bandWidth = options.bandWidth ? Number(options.bandWidth) : Number(alCfg.uncertainty_band_width || 20);
 
   // 1. Fetch all open / pending review alerts
-  const openAlerts = await models.Alert.find({
+  const query = models.Alert.find({
     status: { $in: ['New', 'In Review L1', 'Escalated L2'] }
   });
+  const openAlerts = typeof query.lean === 'function' ? await query.lean() : await query;
 
   // 2. Fetch all existing labeled transaction IDs to avoid querying already-labeled items
   const allLabels = await models.Label.find({});
@@ -192,8 +193,10 @@ async function getActiveLearningQueue(options = {}) {
     const uncertaintyScore = Math.max(0, parseFloat((1.0 - (distFromThreshold / 50.0)).toFixed(4)));
     const isInUncertaintyBand = distFromThreshold <= bandWidth;
 
+    const alertObj = typeof alert.toObject === 'function' ? alert.toObject() : (alert._doc ? { ...alert._doc } : alert);
+
     scoredAlerts.push({
-      ...alert,
+      ...alertObj,
       uncertainty_score: uncertaintyScore,
       distance_to_threshold: distFromThreshold,
       decision_threshold: threshold,
@@ -252,7 +255,8 @@ async function computeFeedbackMetrics() {
     }
 
     // Daily grouping
-    const dateStr = (lbl.timestamp || lbl.createdAt || new Date().toISOString()).split('T')[0];
+    const tsVal = lbl.timestamp || lbl.createdAt;
+    const dateStr = (tsVal instanceof Date ? tsVal.toISOString() : (tsVal ? String(tsVal) : new Date().toISOString())).split('T')[0];
     if (!dailyStats[dateStr]) {
       dailyStats[dateStr] = { date: dateStr, total: 0, tp: 0, fp: 0, str: 0, agreement: 0, compared: 0 };
     }

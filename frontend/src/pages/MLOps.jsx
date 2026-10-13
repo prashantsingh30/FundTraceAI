@@ -65,10 +65,13 @@ const MLOps = () => {
   const [reportVersionId, setReportVersionId] = useState(null);
   const [reportMarkdown, setReportMarkdown] = useState('');
   const [reportLoading, setReportLoading] = useState(false);
+  const [benchmarkSortKey, setBenchmarkSortKey] = useState('val_pr_auc');
+  const [benchmarkSortAsc, setBenchmarkSortAsc] = useState(false);
 
   const defaultMetrics = {
     comparison: {
       "Random Forest": {
+        accuracy: 0.9835,
         pr_auc: 0.9237,
         roc_auc: 0.9778,
         recall_at_1pct_fpr: 0.9014,
@@ -80,11 +83,14 @@ const MLOps = () => {
         precision: 0.8800,
         recall: 0.9110,
         brier_score: 0.0126,
+        training_time_ms: 450,
+        inference_time_ms: 12,
         confusion_matrix: [[2025, 24], [13, 129]],
         val_pr_auc: 0.9189,
         daily_alerts: 25.4
       },
       "XGBoost": {
+        accuracy: 0.9802,
         pr_auc: 0.8931,
         roc_auc: 0.9679,
         recall_at_1pct_fpr: 0.9085,
@@ -96,11 +102,14 @@ const MLOps = () => {
         precision: 0.8750,
         recall: 0.8930,
         brier_score: 0.0117,
+        training_time_ms: 380,
+        inference_time_ms: 9,
         confusion_matrix: [[2020, 29], [15, 127]],
         val_pr_auc: 0.9225,
         daily_alerts: 26.8
       },
       "Gradient Boosting": {
+        accuracy: 0.9740,
         pr_auc: 0.8148,
         roc_auc: 0.9633,
         recall_at_1pct_fpr: 0.8028,
@@ -112,11 +121,14 @@ const MLOps = () => {
         precision: 0.8200,
         recall: 0.8650,
         brier_score: 0.0176,
+        training_time_ms: 620,
+        inference_time_ms: 10,
         confusion_matrix: [[2010, 39], [19, 123]],
         val_pr_auc: 0.8148,
         daily_alerts: 28.1
       },
       "Decision Tree": {
+        accuracy: 0.9671,
         pr_auc: 0.8007,
         roc_auc: 0.8976,
         recall_at_1pct_fpr: 0.8380,
@@ -128,11 +140,14 @@ const MLOps = () => {
         precision: 0.7900,
         recall: 0.8420,
         brier_score: 0.0244,
+        training_time_ms: 45,
+        inference_time_ms: 3,
         confusion_matrix: [[1998, 51], [22, 120]],
         val_pr_auc: 0.8335,
         daily_alerts: 30.2
       },
       "Logistic Regression": {
+        accuracy: 0.9625,
         pr_auc: 0.9110,
         roc_auc: 0.9640,
         recall_at_1pct_fpr: 0.8844,
@@ -144,6 +159,8 @@ const MLOps = () => {
         precision: 0.7600,
         recall: 0.9020,
         brier_score: 0.0257,
+        training_time_ms: 35,
+        inference_time_ms: 2,
         confusion_matrix: [[1980, 69], [14, 128]],
         val_pr_auc: 0.9110,
         daily_alerts: 34.5
@@ -449,6 +466,90 @@ const MLOps = () => {
 
   const calSvgPoints = toSvgCoords(calPreds, calTrues);
   const uncalSvgPoints = toSvgCoords(uncalPreds, uncalTrues);
+
+  const formatMetricVal = (val, format = 'float4', tooltip = 'Metric undefined under single-class or zero-denominator split') => {
+    if (val === null || val === undefined || Number.isNaN(val)) {
+      return <span className="text-gray-400 font-normal italic" title={tooltip}>N/A</span>;
+    }
+    const n = Number(val);
+    if (format === 'pct2') return `${(n * 100).toFixed(2)}%`;
+    if (format === 'pct1') return `${(n * 100).toFixed(1)}%`;
+    if (format === 'ms') return `${Math.round(n)} ms`;
+    return n.toFixed(4);
+  };
+
+  const handleBenchmarkSort = (key) => {
+    if (benchmarkSortKey === key) {
+      setBenchmarkSortAsc(!benchmarkSortAsc);
+    } else {
+      setBenchmarkSortKey(key);
+      setBenchmarkSortAsc(false);
+    }
+  };
+
+  const exportBenchmarksCSV = () => {
+    const modelKeys = Object.keys(mlData.comparison || {});
+    if (modelKeys.length === 0) return;
+
+    const headers = [
+      'Algorithm',
+      'Accuracy',
+      'Precision',
+      'Recall',
+      'F1-Score',
+      'Val PR-AUC',
+      'Test ROC-AUC',
+      'Recall@1%FPR',
+      'Recall@5%FPR',
+      'Precision@100',
+      'Brier Score',
+      'Training Time (ms)',
+      'Inference Time (ms)',
+      'Designation'
+    ];
+
+    const rows = modelKeys.map((name) => {
+      const m = mlData.comparison[name] || {};
+      const isChamp = mlData.best_model === name ? 'Champion' : (name === registryData.challenger ? 'Challenger' : 'Candidate');
+      return [
+        `"${name}"`,
+        m.accuracy != null ? (m.accuracy * 100).toFixed(2) + '%' : 'N/A',
+        m.precision != null ? (m.precision * 100).toFixed(2) + '%' : 'N/A',
+        m.recall != null ? (m.recall * 100).toFixed(2) + '%' : 'N/A',
+        m.f1_score != null ? (m.f1_score * 100).toFixed(2) + '%' : 'N/A',
+        (m.val_pr_auc || m.pr_auc) != null ? Number(m.val_pr_auc || m.pr_auc).toFixed(4) : 'N/A',
+        m.roc_auc != null ? Number(m.roc_auc).toFixed(4) : 'N/A',
+        m.recall_at_1pct_fpr != null ? (m.recall_at_1pct_fpr * 100).toFixed(1) + '%' : 'N/A',
+        m.recall_at_5pct_fpr != null ? (m.recall_at_5pct_fpr * 100).toFixed(1) + '%' : 'N/A',
+        m.precision_at_100 != null ? (m.precision_at_100 * 100).toFixed(1) + '%' : 'N/A',
+        m.brier_score != null ? Number(m.brier_score).toFixed(4) : 'N/A',
+        m.training_time_ms != null ? m.training_time_ms : 'N/A',
+        m.inference_time_ms != null ? m.inference_time_ms : 'N/A',
+        isChamp
+      ].join(',');
+    });
+
+    const csvContent = 'data:text/csv;charset=utf-8,' + [headers.join(','), ...rows].join('\n');
+    const encodedUri = encodeURI(csvContent);
+    const link = document.createElement('a');
+    link.setAttribute('href', encodedUri);
+    link.setAttribute('download', `fundtrace_model_benchmarks_${new Date().toISOString().substring(0, 10)}.csv`);
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+  };
+
+  const sortedBenchmarkModels = Object.keys(mlData.comparison || {}).sort((a, b) => {
+    const ma = mlData.comparison[a] || {};
+    const mb = mlData.comparison[b] || {};
+    let valA = ma[benchmarkSortKey] != null ? ma[benchmarkSortKey] : -999999;
+    let valB = mb[benchmarkSortKey] != null ? mb[benchmarkSortKey] : -999999;
+    if (benchmarkSortKey === 'val_pr_auc') {
+      valA = (ma.val_pr_auc || ma.pr_auc) ?? -999999;
+      valB = (mb.val_pr_auc || mb.pr_auc) ?? -999999;
+    }
+    return benchmarkSortAsc ? (valA - valB) : (valB - valA);
+  });
 
   return (
     <div className="flex-1 pl-64 pt-16 min-h-screen bg-gray-50 dark:bg-darkBg">
@@ -1101,8 +1202,95 @@ const MLOps = () => {
         )}
 
         {/* TAB 4: CALIBRATION & BENCHMARK RESEARCH */}
-        {activeTab === 'benchmarks' && (
+        {activeTab === 'benchmarks' && (() => {
+          const benchmarkDiag = mlData.benchmark_diagnostics || {};
+          const testSampleCount = benchmarkDiag.test_records ?? mlData.split_details?.test_rows ?? 0;
+          const testPositivesCount = benchmarkDiag.test_positives ?? mlData.split_details?.test_positives ?? (mlData.comparison && activeModelKey && mlData.comparison[activeModelKey]?.confusion_matrix ? (mlData.comparison[activeModelKey].confusion_matrix[1][0] + mlData.comparison[activeModelKey].confusion_matrix[1][1]) : 0);
+          const testFraudRate = benchmarkDiag.test_fraud_rate ?? (testSampleCount > 0 ? testPositivesCount / testSampleCount : mlData.fraud_rate ?? 0.01);
+          const splitStrategyUsed = benchmarkDiag.split_mode || mlData.split_details?.mode || mlData.split_mode || splitMode || 'temporal';
+          const thresholdUsedVal = benchmarkDiag.optimal_threshold ?? mlData.optimal_threshold ?? optimalThresh;
+          const versionIdVal = benchmarkDiag.version_id || mlData.version_id || 'v_champion';
+          const isSmallHoldout = testSampleCount > 0 && (testSampleCount < 500 || testPositivesCount < 10);
+
+          return (
           <div className="space-y-6">
+            {/* Benchmark Diagnostics & Statistical Protocol Banner */}
+            <div className="glass-panel p-5 space-y-4 border-l-4 border-l-blue-600">
+              <div className="flex flex-col sm:flex-row justify-between sm:items-center gap-2">
+                <div className="flex items-center gap-2">
+                  <Activity className="w-4 h-4 text-blue-600" />
+                  <h4 className="text-xs font-bold text-gray-800 dark:text-gray-200 uppercase tracking-wider">
+                    Benchmark Diagnostics & Evaluation Protocol
+                  </h4>
+                </div>
+                <div className="flex items-center gap-2">
+                  <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full flex items-center gap-1 ${isSmallHoldout ? 'bg-amber-100 text-amber-800 dark:bg-amber-950/40 dark:text-amber-300' : 'bg-emerald-100 text-emerald-800 dark:bg-emerald-950/40 dark:text-emerald-300'}`}>
+                    {isSmallHoldout ? <AlertTriangle className="w-3 h-3" /> : <ShieldCheck className="w-3 h-3" />}
+                    {isSmallHoldout ? 'Small Evaluation Sample' : 'Statistically Robust Evaluation'}
+                  </span>
+                </div>
+              </div>
+
+              {isSmallHoldout && (
+                <div className="p-3 rounded-lg bg-amber-500/10 border border-amber-500/20 text-xs text-amber-800 dark:text-amber-300 flex items-start gap-2">
+                  <AlertTriangle className="w-4 h-4 mt-0.5 flex-shrink-0" />
+                  <p className="leading-relaxed text-[11px]">
+                    <b>Small Holdout Sample Warning:</b> Test partition contains only {testPositivesCount} positive instances across {testSampleCount} transactions. Small evaluation subsets risk small-sample inflation (e.g. 100% recall on 2 cases or ROC-AUC=1.0000). To inspect genuine generalization across unseen senders, evaluate on full dataset (15,000+ rows) with Account-Disjoint split.
+                  </p>
+                </div>
+              )}
+
+              <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3 text-xs">
+                <div className="p-3 bg-slate-50 dark:bg-darkBorder/20 rounded-xl border border-gray-100 dark:border-darkBorder">
+                  <span className="text-[10px] text-gray-400 uppercase font-semibold block">Sample Size (N)</span>
+                  <span className="text-sm font-bold font-mono text-gray-800 dark:text-gray-100">
+                    {testSampleCount ? testSampleCount.toLocaleString() : 'N/A'}
+                  </span>
+                  <span className="text-[10px] text-gray-500 block">Test holdout rows</span>
+                </div>
+
+                <div className="p-3 bg-slate-50 dark:bg-darkBorder/20 rounded-xl border border-gray-100 dark:border-darkBorder">
+                  <span className="text-[10px] text-gray-400 uppercase font-semibold block">Positives (AML)</span>
+                  <span className="text-sm font-bold font-mono text-rose-600 dark:text-rose-400">
+                    {testPositivesCount ? testPositivesCount.toLocaleString() : 'N/A'}
+                  </span>
+                  <span className="text-[10px] text-gray-500 block">Confirmed targets</span>
+                </div>
+
+                <div className="p-3 bg-slate-50 dark:bg-darkBorder/20 rounded-xl border border-gray-100 dark:border-darkBorder">
+                  <span className="text-[10px] text-gray-400 uppercase font-semibold block">Prevalence</span>
+                  <span className="text-sm font-bold font-mono text-gray-800 dark:text-gray-100">
+                    {(testFraudRate * 100).toFixed(2)}%
+                  </span>
+                  <span className="text-[10px] text-gray-500 block">Class proportion</span>
+                </div>
+
+                <div className="p-3 bg-slate-50 dark:bg-darkBorder/20 rounded-xl border border-gray-100 dark:border-darkBorder">
+                  <span className="text-[10px] text-gray-400 uppercase font-semibold block">Split Protocol</span>
+                  <span className="text-sm font-bold capitalize text-blue-600 dark:text-blue-400 block truncate" title={splitStrategyUsed}>
+                    {splitStrategyUsed === 'account-disjoint' ? 'Disjoint Accts' : 'Temporal Split'}
+                  </span>
+                  <span className="text-[10px] text-gray-500 block">Zero train overlap</span>
+                </div>
+
+                <div className="p-3 bg-slate-50 dark:bg-darkBorder/20 rounded-xl border border-gray-100 dark:border-darkBorder">
+                  <span className="text-[10px] text-gray-400 uppercase font-semibold block">Decision Threshold</span>
+                  <span className="text-sm font-bold font-mono text-purple-600 dark:text-purple-400">
+                    @{thresholdUsedVal.toFixed(3)}
+                  </span>
+                  <span className="text-[10px] text-gray-500 block">Val-tuned capacity</span>
+                </div>
+
+                <div className="p-3 bg-slate-50 dark:bg-darkBorder/20 rounded-xl border border-gray-100 dark:border-darkBorder">
+                  <span className="text-[10px] text-gray-400 uppercase font-semibold block">Registry Version</span>
+                  <span className="text-sm font-bold font-mono text-gray-700 dark:text-gray-300 block truncate" title={versionIdVal}>
+                    {versionIdVal}
+                  </span>
+                  <span className="text-[10px] text-gray-500 block">Model snapshot</span>
+                </div>
+              </div>
+            </div>
+
             {/* Comparative Classifier Table */}
             <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
               <div className="lg:col-span-2 glass-panel p-6 space-y-4">
@@ -1112,11 +1300,20 @@ const MLOps = () => {
                       Comparative Classifier Research (Holdout Evaluation)
                     </h4>
                     <p className="text-[11px] text-gray-500 dark:text-gray-400">
-                      Best model chosen strictly on Validation PR-AUC. Test partition evaluated once.
+                      Standardized benchmark across all 5 AML classifiers. Best model selected strictly on Validation PR-AUC.
                     </p>
                   </div>
 
-                  <div className="flex items-center gap-2">
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <button
+                      onClick={exportBenchmarksCSV}
+                      title="Export benchmark results to CSV"
+                      className="flex items-center gap-1.5 px-3 py-1.5 bg-slate-100 hover:bg-slate-200 dark:bg-darkBorder/40 dark:hover:bg-darkBorder text-[10px] font-bold text-gray-700 dark:text-gray-300 rounded-lg transition-all border border-gray-200 dark:border-darkBorder"
+                    >
+                      <Download className="w-3 h-3 text-blue-500" />
+                      Export CSV
+                    </button>
+
                     <select
                       value={splitMode}
                       onChange={(e) => setSplitMode(e.target.value)}
@@ -1141,19 +1338,39 @@ const MLOps = () => {
                 <div className="overflow-x-auto">
                   <table className="w-full text-xs text-left">
                     <thead>
-                      <tr className="text-gray-400 border-b border-gray-100 dark:border-darkBorder">
-                        <th className="py-2.5 font-bold">Classifier</th>
-                        <th className="py-2.5 font-bold text-center">Val PR-AUC</th>
-                        <th className="py-2.5 font-bold text-center">Test ROC-AUC</th>
-                        <th className="py-2.5 font-bold text-center">Rec@1%FPR</th>
-                        <th className="py-2.5 font-bold text-center">Rec@5%FPR</th>
-                        <th className="py-2.5 font-bold text-center">P@100</th>
-                        <th className="py-2.5 font-bold text-center">Brier Score</th>
+                      <tr className="text-gray-400 border-b border-gray-100 dark:border-darkBorder select-none text-[11px]">
+                        <th className="py-2.5 font-bold cursor-pointer hover:text-gray-700 dark:hover:text-gray-200" onClick={() => handleBenchmarkSort('name')}>
+                          Classifier {benchmarkSortKey === 'name' && (benchmarkSortAsc ? '▲' : '▼')}
+                        </th>
+                        <th className="py-2.5 font-bold text-center cursor-pointer hover:text-gray-700 dark:hover:text-gray-200" onClick={() => handleBenchmarkSort('accuracy')} title="Proportion of total correct predictions">
+                          Accuracy {benchmarkSortKey === 'accuracy' && (benchmarkSortAsc ? '▲' : '▼')}
+                        </th>
+                        <th className="py-2.5 font-bold text-center cursor-pointer hover:text-gray-700 dark:hover:text-gray-200" onClick={() => handleBenchmarkSort('precision')} title="Precision for positive class (Suspicious/AML)">
+                          Precision {benchmarkSortKey === 'precision' && (benchmarkSortAsc ? '▲' : '▼')}
+                        </th>
+                        <th className="py-2.5 font-bold text-center cursor-pointer hover:text-gray-700 dark:hover:text-gray-200" onClick={() => handleBenchmarkSort('recall')} title="Recall/Sensitivity for positive class (Suspicious/AML)">
+                          Recall {benchmarkSortKey === 'recall' && (benchmarkSortAsc ? '▲' : '▼')}
+                        </th>
+                        <th className="py-2.5 font-bold text-center cursor-pointer hover:text-gray-700 dark:hover:text-gray-200" onClick={() => handleBenchmarkSort('f1_score')} title="Harmonic mean of precision and recall">
+                          F1-Score {benchmarkSortKey === 'f1_score' && (benchmarkSortAsc ? '▲' : '▼')}
+                        </th>
+                        <th className="py-2.5 font-bold text-center cursor-pointer hover:text-gray-700 dark:hover:text-gray-200 text-emerald-600 dark:text-emerald-400" onClick={() => handleBenchmarkSort('val_pr_auc')} title="Validation Precision-Recall AUC (Primary Champion Selection Metric)">
+                          Val PR-AUC {benchmarkSortKey === 'val_pr_auc' && (benchmarkSortAsc ? '▲' : '▼')}
+                        </th>
+                        <th className="py-2.5 font-bold text-center cursor-pointer hover:text-gray-700 dark:hover:text-gray-200" onClick={() => handleBenchmarkSort('roc_auc')} title="ROC AUC across discrimination thresholds">
+                          ROC-AUC {benchmarkSortKey === 'roc_auc' && (benchmarkSortAsc ? '▲' : '▼')}
+                        </th>
+                        <th className="py-2.5 font-bold text-center cursor-pointer hover:text-gray-700 dark:hover:text-gray-200" onClick={() => handleBenchmarkSort('training_time_ms')} title="Model training fit time in milliseconds">
+                          Fit Time {benchmarkSortKey === 'training_time_ms' && (benchmarkSortAsc ? '▲' : '▼')}
+                        </th>
+                        <th className="py-2.5 font-bold text-center cursor-pointer hover:text-gray-700 dark:hover:text-gray-200" onClick={() => handleBenchmarkSort('inference_time_ms')} title="Batch prediction latency in milliseconds">
+                          Infer Time {benchmarkSortKey === 'inference_time_ms' && (benchmarkSortAsc ? '▲' : '▼')}
+                        </th>
                         <th className="py-2.5 font-bold text-center">Select</th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-gray-100 dark:divide-darkBorder/40">
-                      {Object.keys(mlData.comparison || {}).map((modelName) => {
+                      {sortedBenchmarkModels.map((modelName) => {
                         const m = mlData.comparison[modelName] || {};
                         const isChampion = mlData.best_model === modelName;
                         const isSelected = activeModelKey === modelName;
@@ -1171,15 +1388,29 @@ const MLOps = () => {
                                 </span>
                               )}
                             </td>
-                            <td className="py-3 text-center font-mono text-emerald-600 dark:text-emerald-400 font-bold">
-                              {((m.val_pr_auc || m.pr_auc || 0)).toFixed(4)}
+                            <td className="py-3 text-center font-mono">
+                              {formatMetricVal(m.accuracy, 'pct2')}
                             </td>
-                            <td className="py-3 text-center font-mono">{((m.roc_auc || 0)).toFixed(4)}</td>
-                            <td className="py-3 text-center font-mono">{((m.recall_at_1pct_fpr || 0) * 100).toFixed(1)}%</td>
-                            <td className="py-3 text-center font-mono">{((m.recall_at_5pct_fpr || 0) * 100).toFixed(1)}%</td>
-                            <td className="py-3 text-center font-mono">{((m.precision_at_100 || 0) * 100).toFixed(1)}%</td>
-                            <td className="py-3 text-center font-mono text-purple-600 dark:text-purple-400">
-                              {((m.brier_score || 0)).toFixed(4)}
+                            <td className="py-3 text-center font-mono">
+                              {formatMetricVal(m.precision, 'pct2')}
+                            </td>
+                            <td className="py-3 text-center font-mono">
+                              {formatMetricVal(m.recall, 'pct2')}
+                            </td>
+                            <td className="py-3 text-center font-mono font-bold text-gray-700 dark:text-gray-200">
+                              {formatMetricVal(m.f1_score, 'float4')}
+                            </td>
+                            <td className="py-3 text-center font-mono text-emerald-600 dark:text-emerald-400 font-bold">
+                              {formatMetricVal(m.val_pr_auc || m.pr_auc, 'float4')}
+                            </td>
+                            <td className="py-3 text-center font-mono">
+                              {formatMetricVal(m.roc_auc, 'float4')}
+                            </td>
+                            <td className="py-3 text-center font-mono text-gray-500 text-[11px]">
+                              {formatMetricVal(m.training_time_ms, 'ms')}
+                            </td>
+                            <td className="py-3 text-center font-mono text-gray-500 text-[11px]">
+                              {formatMetricVal(m.inference_time_ms, 'ms')}
                             </td>
                             <td className="py-3 text-center">
                               <input 
@@ -1194,6 +1425,61 @@ const MLOps = () => {
                       })}
                     </tbody>
                   </table>
+                </div>
+
+                {/* Confusion Matrix Visualizer for Selected Model */}
+                <div className="pt-4 border-t border-gray-100 dark:border-darkBorder">
+                  <div className="flex items-center justify-between pb-2">
+                    <h5 className="text-[11px] font-bold text-gray-400 uppercase tracking-wider flex items-center gap-1.5">
+                      <Target className="w-3.5 h-3.5 text-blue-500" />
+                      Confusion Matrix Diagnostics &bull; <span className="text-blue-600 dark:text-blue-400">{activeModelKey}</span>
+                    </h5>
+                    <span className="text-[10px] text-gray-400">
+                      Positive Class: <b className="text-red-500">Suspicious AML (1)</b> &bull; Negative Class: <b className="text-emerald-500">Normal (0)</b>
+                    </span>
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-3 text-xs pt-1">
+                    <div className="p-3 rounded-xl bg-emerald-50/50 dark:bg-emerald-950/20 border border-emerald-500/20 space-y-1">
+                      <div className="flex justify-between items-center">
+                        <span className="text-[10px] font-bold uppercase text-emerald-700 dark:text-emerald-300">True Negatives (TN)</span>
+                        <span className="font-mono font-bold text-emerald-600">{tn.toLocaleString()}</span>
+                      </div>
+                      <p className="text-[10px] text-gray-500 dark:text-gray-400">
+                        Legitimate transactions correctly cleared without friction.
+                      </p>
+                    </div>
+
+                    <div className="p-3 rounded-xl bg-amber-50/50 dark:bg-amber-950/20 border border-amber-500/20 space-y-1">
+                      <div className="flex justify-between items-center">
+                        <span className="text-[10px] font-bold uppercase text-amber-700 dark:text-amber-300">False Positives (FP)</span>
+                        <span className="font-mono font-bold text-amber-600">{fp.toLocaleString()}</span>
+                      </div>
+                      <p className="text-[10px] text-gray-500 dark:text-gray-400">
+                        False alarms generating investigative analyst review burden.
+                      </p>
+                    </div>
+
+                    <div className="p-3 rounded-xl bg-rose-50/50 dark:bg-rose-950/20 border border-rose-500/20 space-y-1">
+                      <div className="flex justify-between items-center">
+                        <span className="text-[10px] font-bold uppercase text-rose-700 dark:text-rose-300">False Negatives (FN)</span>
+                        <span className="font-mono font-bold text-rose-600">{fn.toLocaleString()}</span>
+                      </div>
+                      <p className="text-[10px] text-gray-500 dark:text-gray-400">
+                        Missed suspicious money laundering (direct compliance risk).
+                      </p>
+                    </div>
+
+                    <div className="p-3 rounded-xl bg-emerald-50/50 dark:bg-emerald-950/20 border border-emerald-500/20 space-y-1">
+                      <div className="flex justify-between items-center">
+                        <span className="text-[10px] font-bold uppercase text-emerald-700 dark:text-emerald-300">True Positives (TP)</span>
+                        <span className="font-mono font-bold text-emerald-600">{tp.toLocaleString()}</span>
+                      </div>
+                      <p className="text-[10px] text-gray-500 dark:text-gray-400">
+                        Confirmed laundering rings detected and queued for review.
+                      </p>
+                    </div>
+                  </div>
                 </div>
               </div>
 
@@ -1376,7 +1662,8 @@ const MLOps = () => {
               </div>
             </div>
           </div>
-        )}
+          );
+        })()}
 
         {/* Validation Report Modal */}
         {reportModalOpen && (

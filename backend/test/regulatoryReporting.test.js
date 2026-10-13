@@ -1,7 +1,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const path = require('path');
-const { connectDB, models } = require('../src/config/db');
+const { connectDB, models, mongoose } = require('../src/config/db');
 const {
   buildDeterministicSTRNarrative,
   generateSTRFromCase,
@@ -10,6 +10,10 @@ const {
   getStrDueDate,
   getCtrDueDate
 } = require('../src/services/regulatoryService');
+
+test.after(async () => {
+  await mongoose.disconnect();
+});
 
 test('Regulatory Reporting & STR/CTR Workflow Suite', async (t) => {
   await connectDB();

@@ -3,13 +3,17 @@ const assert = require('node:assert/strict');
 const path = require('path');
 const fs = require('fs');
 
-const { connectDB, models, Customer, Account } = require('../src/config/db');
+const { connectDB, models, Customer, Account, mongoose } = require('../src/config/db');
 const { getCustomers, getCustomerById } = require('../src/controllers/customerController');
 const { matchSingleHeader, suggestMapping } = require('../src/services/columnMappingService');
 const { CANONICAL_SCHEMA } = require('../src/config/canonicalSchema');
 
 test.before(async () => {
   await connectDB();
+});
+
+test.after(async () => {
+  await mongoose.disconnect();
 });
 
 test('Customer Model: FileModel & Mongoose schema contains required customer and account fields', () => {

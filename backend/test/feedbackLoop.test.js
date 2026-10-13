@@ -3,7 +3,7 @@ const assert = require('node:assert/strict');
 const path = require('path');
 const fs = require('fs');
 
-const { connectDB, models } = require('../src/config/db');
+const { connectDB, models, mongoose } = require('../src/config/db');
 const feedbackService = require('../src/services/feedbackService');
 const { 
   getRetrainingConfig, 
@@ -12,11 +12,24 @@ const {
 
 test.before(async () => {
   await connectDB();
-  // Clear test labels from DB if any
+  // Clear test labels and test records from DB if any
+  if (models.Label && typeof models.Label.deleteMany === 'function') {
+    await models.Label.deleteMany({});
+  }
+  if (models.Transaction && typeof models.Transaction.deleteMany === 'function') {
+    await models.Transaction.deleteMany({ transaction_id: { $regex: /^TX-(FEEDBACK|UNCERTAIN|CERTAIN)/ } });
+  }
+  if (models.Alert && typeof models.Alert.deleteMany === 'function') {
+    await models.Alert.deleteMany({ alert_id: { $regex: /^ALT-(FB|FEEDBACK|UNCERTAIN|CERTAIN)/ } });
+  }
   const labelsFile = path.join(__dirname, '..', 'data', 'Label.json');
   if (fs.existsSync(labelsFile)) {
     fs.writeFileSync(labelsFile, JSON.stringify([], null, 2));
   }
+});
+
+test.after(async () => {
+  await mongoose.disconnect();
 });
 
 test('1. Analyst Dispositions stored as binary labels in labels collection without mutating transaction', async () => {

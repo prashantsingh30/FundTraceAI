@@ -1,7 +1,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 
-const { connectDB, models, Transaction, ScreeningDecision } = require('../src/config/db');
+const { connectDB, models, Transaction, ScreeningDecision, mongoose } = require('../src/config/db');
 const {
   normalizeName,
   calculateNameSimilarity,
@@ -28,6 +28,10 @@ const { createTransaction } = require('../src/controllers/transactionController'
 test.before(async () => {
   await connectDB();
   await loadWatchlists(true);
+});
+
+test.after(async () => {
+  await mongoose.disconnect();
 });
 
 // Helper for mock HTTP responses

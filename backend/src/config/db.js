@@ -42,7 +42,7 @@ const TransactionSchema = new mongoose.Schema({
   fx_rate: { type: Number, default: 1.0 },
   fx_date: { type: Date, default: null },
   timestamp: { type: Date, default: Date.now, index: true },
-  country: { type: String, required: true, index: true },
+  country: { type: String, default: 'IN', index: true },
   city: { type: String },
   device_id: { type: String },
   ip_address: { type: String },
@@ -64,6 +64,7 @@ const TransactionSchema = new mongoose.Schema({
   customer_id: { type: String, default: null, index: true },
   shap_explanation: { type: Object },
   reasons: [{ type: String }],
+  explanation_type: { type: String, default: null },
   model_version: { type: String, default: null },
   shadow_prediction: { type: Object, default: null }
 });
@@ -94,8 +95,9 @@ const TransactionEventSchema = new mongoose.Schema({
 
 const AlertSchema = new mongoose.Schema({
   alert_id: { type: String, required: true, unique: true, index: true },
+  customer_id: { type: String, default: null, index: true },
   entity_type: { type: String, enum: ['Customer', 'Account'], default: 'Account', index: true },
-  entity_id: { type: String, required: true, index: true },
+  entity_id: { type: String, default: function() { return this.sender_account || this.transaction_id || 'ACC_DEFAULT'; }, index: true },
   entity_name: { type: String, default: '' },
   dedup_key: { type: String, index: true },
   transaction_id: { type: String, required: true, index: true },
@@ -104,7 +106,18 @@ const AlertSchema = new mongoose.Schema({
   total_volume: { type: Number, default: 0 },
   risk_score: { type: Number, required: true, index: true },
   priority_score: { type: Number, default: 50, index: true },
-  level: { type: String, enum: ['Low', 'Medium', 'High', 'Critical'], required: true, index: true },
+  level: { 
+    type: String, 
+    enum: ['Low', 'Medium', 'High', 'Critical'], 
+    default: function() {
+      const r = this.risk_score || 0;
+      if (r >= 80) return 'Critical';
+      if (r >= 60) return 'High';
+      if (r >= 30) return 'Medium';
+      return 'Low';
+    },
+    index: true 
+  },
   status: { 
     type: String, 
     enum: ['New', 'In Review L1', 'Escalated L2', 'Closed', 'Investigating', 'Dismissed', 'Escalated'], 
@@ -144,6 +157,7 @@ const CaseSchema = new mongoose.Schema({
   assigned_to: { type: String, default: null, index: true }, // Username of Investigator
   status: { type: String, enum: ['Open', 'Under Review', 'Pending STR', 'Closed'], default: 'Open', index: true },
   alerts: [{ type: String }], // Alert IDs
+  transactions: [{ type: mongoose.Schema.Types.Mixed }],
   merged_into_case_id: { type: String, default: null },
   merged_cases: [{ type: String }],
   notes: [{
@@ -170,6 +184,8 @@ const CaseSchema = new mongoose.Schema({
     uploadedAt: { type: Date, default: Date.now }
   }],
   disposition_code: { type: String, default: null },
+  closure_disposition: { type: String, default: null },
+  closure_rationale: { type: String, default: null },
   closure_reason: { type: String, default: null },
   closed_by: { type: String, default: null },
   closed_at: { type: Date, default: null },
@@ -232,7 +248,7 @@ const CustomerSchema = new mongoose.Schema({
   type: { type: String, enum: ['individual', 'business'], default: 'individual' },
   occupation_or_business_type: { type: String, default: 'General' },
   declared_monthly_income_or_turnover: { type: Number, default: 0 },
-  kyc_risk_rating: { type: String, enum: ['Low', 'Med', 'High'], default: 'Low' },
+  kyc_risk_rating: { type: String, enum: ['Low', 'Med', 'Medium', 'High', 'Critical'], default: 'Low' },
   is_pep: { type: Boolean, default: false },
   onboarding_date: { type: Date, default: Date.now },
   country_of_residence: { type: String, default: 'IN' },
@@ -294,8 +310,9 @@ const STRReportSchema = new mongoose.Schema({
   subject_info: { type: Object, default: {} },
   linked_accounts: [{ type: String }],
   transactions: [{ type: Object }],
+  total_amount: { type: Number, default: 0 },
   total_suspicious_amount: { type: Number, default: 0 },
-  detected_typologies: [{ type: String }],
+  detected_typologies: [{ type: mongoose.Schema.Types.Mixed }],
   reasons_for_suspicion: [{ type: String }],
   narrative: { type: String, required: true },
   status: { 
@@ -1127,6 +1144,7 @@ async function connectDB() {
 // Export models as a getter to support late-binding after connection attempts
 module.exports = {
   connectDB,
+  mongoose,
   isFallback: () => isFallbackMode,
   models: {
     get User() { return User; },

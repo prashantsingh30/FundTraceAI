@@ -1,11 +1,15 @@
 const test = require('node:test');
 const assert = require('node:assert');
-const { connectDB } = require('../src/config/db');
+const { connectDB, mongoose } = require('../src/config/db');
 const dashboardService = require('../src/services/dashboardService');
 const dashboardController = require('../src/controllers/dashboardController');
 
 test.before(async () => {
   await connectDB();
+});
+
+test.after(async () => {
+  await mongoose.disconnect();
 });
 
 test('Dashboard Analytics: Returns comprehensive operational KPIs', async () => {

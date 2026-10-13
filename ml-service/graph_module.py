@@ -89,7 +89,13 @@ def detect_temporal_cycles(
         edge_txs[k].sort()
 
     try:
-        raw_cycles = list(nx.simple_cycles(G, length_bound=max_cycle_length))
+        raw_cycles = []
+        cycle_limit = 500  # Bounded cycle collection to prevent service hang on dense/large graphs
+        t_start = datetime.now()
+        for cycle in nx.simple_cycles(G, length_bound=max_cycle_length):
+            raw_cycles.append(cycle)
+            if len(raw_cycles) >= cycle_limit or (datetime.now() - t_start).total_seconds() > 2.0:
+                break
     except Exception:
         return detected_cycles, cycle_nodes, cycle_edge_keys, cycle_counts
 

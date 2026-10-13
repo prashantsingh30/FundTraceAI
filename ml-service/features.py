@@ -704,6 +704,14 @@ def compute_features_batch(
         .sort_values('_orig_pos')
         .drop(columns=['_orig_pos', '_is_history'], errors='ignore')
     )
+
+    # Final Sanitize: Ensure all feature columns are strictly finite float64 without NaN or Inf
+    for f_col in cols_to_ensure:
+        if f_col in result.columns:
+            result[f_col] = pd.to_numeric(result[f_col], errors='coerce').replace([np.inf, -np.inf], np.nan).fillna(0.0).astype(float)
+        else:
+            result[f_col] = 0.0
+
     result.index = orig_index
     return result
 

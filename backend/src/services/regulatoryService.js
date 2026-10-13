@@ -163,8 +163,17 @@ async function generateSTRFromCase(caseId, user) {
   const linkedAccounts = new Set();
   const txIdList = new Set();
 
-  for (const tid of (caseObj.transactions || [])) {
-    if (tid) txIdList.add(tid);
+  for (const item of (caseObj.transactions || [])) {
+    if (!item) continue;
+    if (typeof item === 'string') {
+      txIdList.add(item);
+    } else if (typeof item === 'object') {
+      const tid = item.transaction_id || item._id;
+      if (tid) {
+        txIdList.add(tid);
+        transactionsMap.set(tid, item);
+      }
+    }
   }
 
   for (const alertId of (caseObj.alerts || [])) {
@@ -338,7 +347,12 @@ async function generateCTRReport(options = {}) {
     
     // Check period if specified
     if (period && t.timestamp) {
-      return String(t.timestamp).startsWith(period);
+      try {
+        const tsStr = (t.timestamp instanceof Date ? t.timestamp.toISOString() : new Date(t.timestamp).toISOString());
+        return tsStr.startsWith(period);
+      } catch (e) {
+        return false;
+      }
     }
     return true;
   });

@@ -8,7 +8,7 @@ const fs = require('fs');
 process.env.NODE_ENV = 'test';
 process.env.MONGODB_URI = 'mongodb://127.0.0.1:27017/aml_test_trustworthiness';
 
-const { connectDB, models } = require('../src/config/db');
+const { connectDB, models, mongoose } = require('../src/config/db');
 const { 
   GENESIS_HASH, 
   computeLogHash, 
@@ -37,6 +37,10 @@ const {
 
 test.before(async () => {
   await connectDB();
+});
+
+test.after(async () => {
+  await mongoose.disconnect();
 });
 
 test('Trustworthiness: Transaction Immutability & Adjustments', async (t) => {

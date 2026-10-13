@@ -648,13 +648,19 @@ async function processIngestionPipeline(jobData, progressReporter = { reportProg
       for (const doc of txDocs) await models.Transaction.create(doc);
     }
 
-    for (const doc of txDocs) {
-      if (getAlertLevel(doc.risk_score)) {
-        try {
-          await processTransactionAlert(doc);
+    // Concurrently process alerts in controlled batches of 25 to optimize ingestion throughput
+    const flaggedDocs = txDocs.filter(doc => getAlertLevel(doc.risk_score));
+    const ALERT_BATCH_SIZE = 25;
+    for (let k = 0; k < flaggedDocs.length; k += ALERT_BATCH_SIZE) {
+      const alertChunk = flaggedDocs.slice(k, k + ALERT_BATCH_SIZE);
+      const settled = await Promise.allSettled(
+        alertChunk.map(doc => processTransactionAlert(doc))
+      );
+      for (const res of settled) {
+        if (res.status === 'fulfilled' && res.value) {
           totalAlerts++;
-        } catch (alErr) {
-          console.warn('[Column Mapping Pipeline] Alert processing error:', alErr.message);
+        } else if (res.status === 'rejected') {
+          console.warn('[Column Mapping Pipeline] Alert processing error:', res.reason?.message);
         }
       }
     }

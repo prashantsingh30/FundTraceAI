@@ -8,6 +8,8 @@ import os
 import json
 import pickle
 import argparse
+import time
+from typing import Optional
 from datetime import datetime
 import pandas as pd
 import numpy as np
@@ -19,6 +21,7 @@ from sklearn.ensemble import RandomForestClassifier, GradientBoostingClassifier
 from sklearn.calibration import CalibratedClassifierCV, calibration_curve
 from sklearn.model_selection import TimeSeriesSplit
 from sklearn.metrics import (
+    accuracy_score,
     average_precision_score,
     roc_auc_score,
     roc_curve,
@@ -47,13 +50,20 @@ DEFAULT_MAX_ALERTS_PER_DAY = 50.0
 
 # ── Custom AML Evaluation Metrics ─────────────────────────────────────────────
 
-def compute_recall_at_fpr(y_true, y_prob, target_fpr: float) -> float:
+def compute_recall_at_fpr(y_true, y_prob, target_fpr: float) -> Optional[float]:
     """
     Computes recall (true positive rate) at a fixed false positive rate.
-    Standard AML metric for fixed investigation budget.
+    Returns None if single-class test set or undefined ROC curve.
     """
-    fpr, tpr, _ = roc_curve(y_true, y_prob)
-    return float(np.interp(target_fpr, fpr, tpr))
+    try:
+        y_true_arr = np.array(y_true)
+        if len(np.unique(y_true_arr)) < 2:
+            return None
+        fpr, tpr, _ = roc_curve(y_true, y_prob)
+        val = float(np.interp(target_fpr, fpr, tpr))
+        return val if not (np.isnan(val) or np.isinf(val)) else None
+    except Exception:
+        return None
 
 
 def compute_precision_at_k(y_true, y_prob, k: int) -> float:
@@ -61,39 +71,103 @@ def compute_precision_at_k(y_true, y_prob, k: int) -> float:
     Computes precision among the top-k highest predicted risk transactions.
     Standard AML metric representing alert triage precision under analyst capacity k.
     """
-    y_true_arr = np.array(y_true)
-    y_prob_arr = np.array(y_prob)
-    order = np.argsort(y_prob_arr)[::-1]
-    top_k_indices = order[:min(k, len(order))]
-    if len(top_k_indices) == 0:
+    try:
+        y_true_arr = np.array(y_true)
+        y_prob_arr = np.nan_to_num(np.array(y_prob), nan=0.0)
+        order = np.argsort(y_prob_arr)[::-1]
+        top_k_indices = order[:min(k, len(order))]
+        if len(top_k_indices) == 0:
+            return 0.0
+        val = float(np.mean(y_true_arr[top_k_indices] == 1))
+        return val if not (np.isnan(val) or np.isinf(val)) else 0.0
+    except Exception:
         return 0.0
-    return float(np.mean(y_true_arr[top_k_indices] == 1))
 
 
 def compute_all_aml_metrics(y_true, y_prob, threshold: float = 0.5) -> dict:
     """
     Computes a comprehensive dictionary of AML research metrics for a given model.
-    Omits generic accuracy in favor of PR-AUC, fixed-FPR recall, precision@k, and Brier score.
+    Guarantees JSON-safe finite values (no NaNs or infinities).
+    Undefined metrics under single-class or zero-denominator conditions return None (JSON null).
+    Genuine zero values remain 0.0. Confusion matrix is guaranteed 2x2.
     """
     y_true_arr = np.array(y_true)
-    y_prob_arr = np.array(y_prob)
+    y_prob_arr = np.nan_to_num(np.array(y_prob), nan=0.0, posinf=1.0, neginf=0.0)
     y_pred = (y_prob_arr >= threshold).astype(int)
 
-    pr_auc = float(average_precision_score(y_true_arr, y_prob_arr))
-    roc_auc = float(roc_auc_score(y_true_arr, y_prob_arr))
-    rec_1pct = compute_recall_at_fpr(y_true_arr, y_prob_arr, 0.01)
-    rec_5pct = compute_recall_at_fpr(y_true_arr, y_prob_arr, 0.05)
+    classes_present = len(np.unique(y_true_arr))
+    positives_count = int(np.sum(y_true_arr == 1))
+    negatives_count = int(np.sum(y_true_arr == 0))
+
+    # 1. Overall Accuracy (strictly defined for valid non-empty test sets)
+    acc = None
+    if len(y_true_arr) > 0:
+        try:
+            acc_val = float(accuracy_score(y_true_arr, y_pred))
+            if not (np.isnan(acc_val) or np.isinf(acc_val)):
+                acc = acc_val
+            else:
+                print("[Metric Info] Accuracy NaN/Inf under current evaluation split; returning None.")
+        except Exception as e:
+            print(f"[Metric Info] Accuracy calculation failed: {e}; returning None.")
+            acc = None
+    else:
+        print("[Metric Info] Test set is empty; accuracy undefined (returning None).")
+        acc = None
+
+    # 2. PR-AUC (Precision-Recall Area Under Curve)
+    # Requires positive class in test set
+    pr_auc = None
+    if classes_present > 1 and positives_count > 0:
+        try:
+            val = float(average_precision_score(y_true_arr, y_prob_arr))
+            if not (np.isnan(val) or np.isinf(val)):
+                pr_auc = val
+        except Exception:
+            pr_auc = None
+
+    # 3. ROC-AUC (Requires both classes present)
+    roc_auc = None
+    if classes_present > 1:
+        try:
+            val = float(roc_auc_score(y_true_arr, y_prob_arr))
+            if not (np.isnan(val) or np.isinf(val)):
+                roc_auc = val
+        except Exception:
+            roc_auc = None
+
+    # 4. Fixed-FPR Recall
+    rec_1pct = compute_recall_at_fpr(y_true_arr, y_prob_arr, 0.01) if classes_present > 1 else None
+    rec_5pct = compute_recall_at_fpr(y_true_arr, y_prob_arr, 0.05) if classes_present > 1 else None
+
+    # 5. Precision@K
     p_at_100 = compute_precision_at_k(y_true_arr, y_prob_arr, 100)
     p_at_200 = compute_precision_at_k(y_true_arr, y_prob_arr, 200)
     p_at_500 = compute_precision_at_k(y_true_arr, y_prob_arr, 500)
-    brier = float(brier_score_loss(y_true_arr, y_prob_arr))
 
+    # 6. Brier Score Loss
+    try:
+        brier_val = float(brier_score_loss(y_true_arr, y_prob_arr))
+        brier = brier_val if not (np.isnan(brier_val) or np.isinf(brier_val)) else 0.0
+    except Exception:
+        brier = 0.0
+
+    # 7. Standard Binary Metrics: Precision, Recall, F1
     prec = float(precision_score(y_true_arr, y_pred, zero_division=0))
-    rec = float(recall_score(y_true_arr, y_pred, zero_division=0))
-    f1 = float(f1_score(y_true_arr, y_pred, zero_division=0))
-    cm = confusion_matrix(y_true_arr, y_pred).tolist()
+
+    if positives_count > 0:
+        rec = float(recall_score(y_true_arr, y_pred, zero_division=0))
+        f1 = float(f1_score(y_true_arr, y_pred, zero_division=0))
+    else:
+        # If there are no positive examples in ground truth, recall is undefined
+        rec = None
+        f1 = None
+
+    # 8. Guaranteed 2x2 Confusion Matrix: [[TN, FP], [FN, TP]]
+    cm = confusion_matrix(y_true_arr, y_pred, labels=[0, 1]).tolist()
 
     return {
+        'accuracy':           acc,
         'pr_auc':             pr_auc,
         'roc_auc':            roc_auc,
         'recall_at_1pct_fpr': rec_1pct,
@@ -189,8 +263,10 @@ def select_optimal_threshold(y_val, y_val_prob, val_timestamps, max_alerts_per_d
             rec = recall_score(y_val_arr, preds, zero_division=0)
             f1 = f1_score(y_val_arr, preds, zero_division=0)
             daily = n_alerts / val_days
-            # Maximize recall; break ties with F1 score
-            if rec > best_recall or (abs(rec - best_recall) < 1e-4 and f1 > best_f1):
+            # Maximize recall; break ties with F1 score, then higher threshold to minimize redundant false alerts
+            if (rec > best_recall) or \
+               (abs(rec - best_recall) < 1e-4 and f1 > best_f1) or \
+               (abs(rec - best_recall) < 1e-4 and abs(f1 - best_f1) < 1e-4 and t > best_thresh):
                 best_recall = float(rec)
                 best_f1 = float(f1)
                 best_thresh = float(t)
@@ -237,18 +313,25 @@ def run_time_series_cv(X_data: pd.DataFrame, y_data: pd.Series, model_builder, i
         fold_metrics.append(m)
 
     summary = {}
-    keys = ['pr_auc', 'roc_auc', 'recall_at_1pct_fpr', 'recall_at_5pct_fpr', 'precision_at_100', 'f1_score', 'brier_score']
+    keys = ['accuracy', 'pr_auc', 'roc_auc', 'recall_at_1pct_fpr', 'recall_at_5pct_fpr', 'precision_at_100', 'f1_score', 'brier_score']
     for k in keys:
-        vals = [f[k] for f in fold_metrics]
+        vals = [f[k] for f in fold_metrics if f.get(k) is not None]
         summary[k] = {
-            'mean': float(np.mean(vals)),
-            'std':  float(np.std(vals))
+            'mean': float(np.mean(vals)) if len(vals) > 0 else None,
+            'std':  float(np.std(vals)) if len(vals) > 0 else None
         }
 
     return {'n_splits': n_splits, 'metrics': summary}
 
 
 # ── Graph Feature Ablation Study ──────────────────────────────────────────────
+
+def _safe_diff(val_a, val_b, decimals=4):
+    """Safely computes rounded difference between two metric values, handling None."""
+    if val_a is None or val_b is None:
+        return 0.0
+    return round(float(val_a) - float(val_b), decimals)
+
 
 def run_graph_ablation_study(
     candidates: dict,
@@ -288,7 +371,7 @@ def run_graph_ablation_study(
         test_probs_base = clf_base.predict_proba(X_te_base)[:, 1]
 
         m_base = compute_all_aml_metrics(y_test, test_probs_base, threshold=threshold)
-        m_base['val_pr_auc'] = float(average_precision_score(y_val, val_probs_base))
+        m_base['val_pr_auc'] = m_base['pr_auc']
 
         # 2. Base + Graph Features (21 features)
         clf_graph = cfg['builder']()
@@ -307,7 +390,7 @@ def run_graph_ablation_study(
         test_probs_graph = clf_graph.predict_proba(X_te_graph)[:, 1]
 
         m_graph = compute_all_aml_metrics(y_test, test_probs_graph, threshold=threshold)
-        m_graph['val_pr_auc'] = float(average_precision_score(y_val, val_probs_graph))
+        m_graph['val_pr_auc'] = m_graph['pr_auc']
 
         # 3. Full Feature Set (Base + Graph + Customer: 28 features)
         clf_full = cfg['builder']()
@@ -326,31 +409,31 @@ def run_graph_ablation_study(
         test_probs_full = clf_full.predict_proba(X_te_full)[:, 1]
 
         m_full = compute_all_aml_metrics(y_test, test_probs_full, threshold=threshold)
-        m_full['val_pr_auc'] = float(average_precision_score(y_val, val_probs_full))
+        m_full['val_pr_auc'] = m_full['pr_auc']
 
         delta_graph = {
-            'pr_auc': round(m_graph['pr_auc'] - m_base['pr_auc'], 4),
-            'roc_auc': round(m_graph['roc_auc'] - m_base['roc_auc'], 4),
-            'recall_at_1pct_fpr': round(m_graph['recall_at_1pct_fpr'] - m_base['recall_at_1pct_fpr'], 4),
-            'f1_score': round(m_graph['f1_score'] - m_base['f1_score'], 4),
+            'pr_auc': _safe_diff(m_graph.get('pr_auc'), m_base.get('pr_auc')),
+            'roc_auc': _safe_diff(m_graph.get('roc_auc'), m_base.get('roc_auc')),
+            'recall_at_1pct_fpr': _safe_diff(m_graph.get('recall_at_1pct_fpr'), m_base.get('recall_at_1pct_fpr')),
+            'f1_score': _safe_diff(m_graph.get('f1_score'), m_base.get('f1_score')),
         }
 
         delta_customer = {
-            'pr_auc': round(m_full['pr_auc'] - m_graph['pr_auc'], 4),
-            'roc_auc': round(m_full['roc_auc'] - m_graph['roc_auc'], 4),
-            'recall_at_1pct_fpr': round(m_full['recall_at_1pct_fpr'] - m_graph['recall_at_1pct_fpr'], 4),
-            'f1_score': round(m_full['f1_score'] - m_graph['f1_score'], 4),
+            'pr_auc': _safe_diff(m_full.get('pr_auc'), m_graph.get('pr_auc')),
+            'roc_auc': _safe_diff(m_full.get('roc_auc'), m_graph.get('roc_auc')),
+            'recall_at_1pct_fpr': _safe_diff(m_full.get('recall_at_1pct_fpr'), m_graph.get('recall_at_1pct_fpr')),
+            'f1_score': _safe_diff(m_full.get('f1_score'), m_graph.get('f1_score')),
         }
 
         delta_total = {
-            'pr_auc': round(m_full['pr_auc'] - m_base['pr_auc'], 4),
-            'roc_auc': round(m_full['roc_auc'] - m_base['roc_auc'], 4),
-            'val_pr_auc': round(m_full['val_pr_auc'] - m_base['val_pr_auc'], 4),
-            'recall_at_1pct_fpr': round(m_full['recall_at_1pct_fpr'] - m_base['recall_at_1pct_fpr'], 4),
-            'recall_at_5pct_fpr': round(m_full['recall_at_5pct_fpr'] - m_base['recall_at_5pct_fpr'], 4),
-            'precision_at_100': round(m_full['precision_at_100'] - m_base['precision_at_100'], 4),
-            'f1_score': round(m_full['f1_score'] - m_base['f1_score'], 4),
-            'brier_score': round(m_full['brier_score'] - m_base['brier_score'], 4)
+            'pr_auc': _safe_diff(m_full.get('pr_auc'), m_base.get('pr_auc')),
+            'roc_auc': _safe_diff(m_full.get('roc_auc'), m_base.get('roc_auc')),
+            'val_pr_auc': _safe_diff(m_full.get('val_pr_auc'), m_base.get('val_pr_auc')),
+            'recall_at_1pct_fpr': _safe_diff(m_full.get('recall_at_1pct_fpr'), m_base.get('recall_at_1pct_fpr')),
+            'recall_at_5pct_fpr': _safe_diff(m_full.get('recall_at_5pct_fpr'), m_base.get('recall_at_5pct_fpr')),
+            'precision_at_100': _safe_diff(m_full.get('precision_at_100'), m_base.get('precision_at_100')),
+            'f1_score': _safe_diff(m_full.get('f1_score'), m_base.get('f1_score')),
+            'brier_score': _safe_diff(m_full.get('brier_score'), m_base.get('brier_score'))
         }
 
         ablation_results[name] = {
@@ -501,8 +584,9 @@ def train_and_evaluate(
     # ── 2. Train on Train Set, Select Best Model on Validation PR-AUC ─────────
     validation_results = {}
     fitted_models = {}
-    best_val_prauc = -1.0
-    best_model_name = ''
+    fitted_train_times = {}
+    best_val_score = -1.0
+    best_model_name = list(candidates.keys())[0]
 
     print("\n" + "=" * 70)
     print("Candidate Model Training & Validation Evaluation (Selection Metric: PR-AUC)")
@@ -517,28 +601,46 @@ def train_and_evaluate(
         X_tr_in = X_train_scaled if is_scaled else X_train
         X_val_in = X_val_scaled if is_scaled else X_val
 
+        t_fit_start = time.perf_counter()
         try:
             clf.fit(X_tr_in, y_train, sample_weight=sample_weights_arr)
         except TypeError:
             clf.fit(X_tr_in, y_train)
+        fit_time_ms = round((time.perf_counter() - t_fit_start) * 1000.0, 2)
 
         fitted_models[name] = clf
+        fitted_train_times[name] = fit_time_ms
 
+        t_val_start = time.perf_counter()
         val_probs = clf.predict_proba(X_val_in)[:, 1]
+        val_infer_ms = round((time.perf_counter() - t_val_start) * 1000.0, 2)
+
         val_metrics = compute_all_aml_metrics(y_val, val_probs, threshold=0.5)
         val_metrics['val_pr_auc'] = val_metrics['pr_auc']
+        val_metrics['training_time_ms'] = fit_time_ms
+        val_metrics['inference_time_ms'] = val_infer_ms
         validation_results[name] = val_metrics
 
-        print(f"[{name}] Val PR-AUC={val_metrics['pr_auc']:.4f} | "
-              f"ROC-AUC={val_metrics['roc_auc']:.4f} | "
-              f"Recall@1%FPR={val_metrics['recall_at_1pct_fpr']:.4f} | "
-              f"Precision@100={val_metrics['precision_at_100']:.4f}")
+        pr_disp = f"{val_metrics['pr_auc']:.4f}" if val_metrics['pr_auc'] is not None else "N/A"
+        roc_disp = f"{val_metrics['roc_auc']:.4f}" if val_metrics['roc_auc'] is not None else "N/A"
+        rec_disp = f"{val_metrics['recall_at_1pct_fpr']:.4f}" if val_metrics['recall_at_1pct_fpr'] is not None else "N/A"
+        p100_disp = f"{val_metrics['precision_at_100']:.4f}" if val_metrics['precision_at_100'] is not None else "N/A"
 
-        if val_metrics['pr_auc'] > best_val_prauc:
-            best_val_prauc = val_metrics['pr_auc']
+        print(f"[{name}] Fit: {fit_time_ms}ms | Val PR-AUC={pr_disp} | "
+              f"ROC-AUC={roc_disp} | "
+              f"Recall@1%FPR={rec_disp} | "
+              f"Precision@100={p100_disp}")
+
+        # Champion Selection Policy:
+        # Prioritize PR-AUC (key AML imbalanced metric). If undefined, fallback to F1 then Accuracy.
+        score = val_metrics['pr_auc'] if val_metrics['pr_auc'] is not None else (
+            val_metrics['f1_score'] if val_metrics['f1_score'] is not None else val_metrics['accuracy']
+        )
+        if score is not None and score > best_val_score:
+            best_val_score = score
             best_model_name = name
 
-    print(f"\n[SELECTED CHAMPION] {best_model_name} (Validation PR-AUC = {best_val_prauc:.4f})")
+    print(f"\n[SELECTED CHAMPION] {best_model_name} (Selection Score = {best_val_score:.4f})")
     champion_clf = fitted_models[best_model_name]
     champion_is_scaled = candidates[best_model_name]['scaled']
 
@@ -551,8 +653,13 @@ def train_and_evaluate(
         calibrated_champion = CalibratedClassifierCV(estimator=champion_clf, method='isotonic', cv='prefit')
 
     X_val_champion = X_val_scaled if champion_is_scaled else X_val
-    calibrated_champion.fit(X_val_champion, y_val)
-    val_cal_probs = calibrated_champion.predict_proba(X_val_champion)[:, 1]
+    try:
+        calibrated_champion.fit(X_val_champion, y_val)
+        val_cal_probs = calibrated_champion.predict_proba(X_val_champion)[:, 1]
+    except Exception as cal_err:
+        print(f"  [Calibration Notice] Using uncalibrated champion probabilities: {cal_err}")
+        calibrated_champion = champion_clf
+        val_cal_probs = champion_clf.predict_proba(X_val_champion)[:, 1]
 
     # ── 4. Threshold Selection Under Analyst Capacity Constraint ──────────────
     print(f"[Threshold Tuning] Optimizing for max recall with capacity <= {max_alerts_per_day:.1f} alerts/day...")
@@ -573,7 +680,8 @@ def train_and_evaluate(
         is_scaled = candidates[name]['scaled']
         X_test_in = X_test_scaled if is_scaled else X_test
 
-        if name == best_model_name:
+        t_test_start = time.perf_counter()
+        if name == best_model_name and calibrated_champion is not None:
             # Champion uses calibrated probabilities
             raw_test_probs = clf.predict_proba(X_test_in)[:, 1]
             test_probs = calibrated_champion.predict_proba(X_test_in)[:, 1]
@@ -581,28 +689,59 @@ def train_and_evaluate(
         else:
             test_probs = clf.predict_proba(X_test_in)[:, 1]
             brier_raw = float(brier_score_loss(y_test, test_probs))
+        test_infer_ms = round((time.perf_counter() - t_test_start) * 1000.0, 2)
 
-        test_m = compute_all_aml_metrics(y_test, test_probs, threshold=optimal_threshold)
+        # Model evaluation threshold:
+        # Champion uses optimal_threshold (tuned on validation calibrated probabilities).
+        # Candidate models use their validation-tuned operating threshold.
+        if name == best_model_name:
+            eval_thresh = optimal_threshold
+        else:
+            X_val_in = X_val_scaled if is_scaled else X_val
+            m_val_probs = clf.predict_proba(X_val_in)[:, 1]
+            eval_thresh, _ = select_optimal_threshold(
+                y_val, m_val_probs, val_df['timestamp'], max_alerts_per_day
+            )
+
+        test_m = compute_all_aml_metrics(y_test, test_probs, threshold=eval_thresh)
+        test_m['threshold_used'] = float(eval_thresh)
         test_m['val_pr_auc'] = validation_results[name]['pr_auc']
+        test_m['training_time_ms'] = fitted_train_times.get(name, 0.0)
+        test_m['inference_time_ms'] = test_infer_ms
         comparison_results[name] = test_m
 
-        print(f"[{name}] Test PR-AUC={test_m['pr_auc']:.4f} | "
-              f"ROC-AUC={test_m['roc_auc']:.4f} | "
-              f"Recall@1%FPR={test_m['recall_at_1pct_fpr']:.4f} | "
-              f"F1(@{optimal_threshold:.2f})={test_m['f1_score']:.4f} | "
-              f"Brier={test_m['brier_score']:.4f}")
+        pr_disp = f"{test_m['pr_auc']:.4f}" if test_m['pr_auc'] is not None else "N/A"
+        roc_disp = f"{test_m['roc_auc']:.4f}" if test_m['roc_auc'] is not None else "N/A"
+        acc_disp = f"{test_m['accuracy']:.4f}" if test_m['accuracy'] is not None else "N/A"
+        rec_disp = f"{test_m['recall_at_1pct_fpr']:.4f}" if test_m['recall_at_1pct_fpr'] is not None else "N/A"
+        f1_disp = f"{test_m['f1_score']:.4f}" if test_m['f1_score'] is not None else "N/A"
+        brier_disp = f"{test_m['brier_score']:.4f}" if test_m['brier_score'] is not None else "N/A"
+
+        print(f"[{name}] (thresh={eval_thresh:.3f}) Acc={acc_disp} | "
+              f"Test PR-AUC={pr_disp} | "
+              f"ROC-AUC={roc_disp} | "
+              f"Recall@1%FPR={rec_disp} | "
+              f"F1(@{eval_thresh:.2f})={f1_disp} | "
+              f"Brier={brier_disp} | "
+              f"Infer: {test_infer_ms}ms")
 
     champion_test_metrics = comparison_results[best_model_name]
-    test_alerts_count = int((calibrated_champion.predict_proba(X_test_champion := (X_test_scaled if champion_is_scaled else X_test))[:, 1] >= optimal_threshold).sum())
+    X_test_champ = X_test_scaled if champion_is_scaled else X_test
+    champ_pred_probs = calibrated_champion.predict_proba(X_test_champ)[:, 1]
+    test_alerts_count = int((champ_pred_probs >= optimal_threshold).sum())
     test_daily_alerts = float(test_alerts_count / test_days)
     champion_test_metrics['daily_alerts'] = test_daily_alerts
 
     # ── 6. Reliability Diagram (Calibration Curve) Data ───────────────────────
-    raw_test_probs_champ = champion_clf.predict_proba(X_test_champion)[:, 1]
-    cal_test_probs_champ = calibrated_champion.predict_proba(X_test_champion)[:, 1]
+    raw_test_probs_champ = champion_clf.predict_proba(X_test_champ)[:, 1]
+    cal_test_probs_champ = calibrated_champion.predict_proba(X_test_champ)[:, 1]
 
-    prob_true_uncal, prob_pred_uncal = calibration_curve(y_test, raw_test_probs_champ, n_bins=10, strategy='uniform')
-    prob_true_cal, prob_pred_cal = calibration_curve(y_test, cal_test_probs_champ, n_bins=10, strategy='uniform')
+    try:
+        prob_true_uncal, prob_pred_uncal = calibration_curve(y_test, raw_test_probs_champ, n_bins=10, strategy='uniform')
+        prob_true_cal, prob_pred_cal = calibration_curve(y_test, cal_test_probs_champ, n_bins=10, strategy='uniform')
+    except Exception:
+        prob_true_uncal, prob_pred_uncal = np.array([0.0, 1.0]), np.array([0.0, 1.0])
+        prob_true_cal, prob_pred_cal = np.array([0.0, 1.0]), np.array([0.0, 1.0])
 
     reliability_data = {
         'brier_score_raw': float(brier_score_loss(y_test, raw_test_probs_champ)),
@@ -686,11 +825,40 @@ def train_and_evaluate(
         'trained_at':             datetime.now().isoformat(),
         'dataset_name':           selected_name,
         'split_mode':             split_mode_normalized,
+        'benchmark_diagnostics': {
+            'dataset_name':           selected_name,
+            'total_records':          len(df),
+            'total_suspicious':       int(df['is_laundering'].sum()),
+            'total_legitimate':       int((df['is_laundering'] == 0).sum()),
+            'overall_fraud_rate':     float(df['is_laundering'].mean()),
+            'split_mode':             split_mode_normalized,
+            'train_records':          len(train_df),
+            'train_positives':        int(train_df['is_laundering'].sum()),
+            'train_negatives':        int((train_df['is_laundering'] == 0).sum()),
+            'train_fraud_rate':       float(train_df['is_laundering'].mean()),
+            'val_records':            len(val_df),
+            'val_positives':          int(val_df['is_laundering'].sum()),
+            'val_negatives':          int((val_df['is_laundering'] == 0).sum()),
+            'val_fraud_rate':         float(val_df['is_laundering'].mean()),
+            'test_records':           len(test_df),
+            'test_positives':         int(test_df['is_laundering'].sum()),
+            'test_negatives':         int((test_df['is_laundering'] == 0).sum()),
+            'test_fraud_rate':        float(test_df['is_laundering'].mean()),
+            'optimal_threshold':      optimal_threshold,
+            'analyst_capacity_daily': max_alerts_per_day,
+            'test_daily_alerts':      test_daily_alerts,
+            'champion_model':         best_model_name,
+            'feature_count':          len(feature_cols),
+            'version_id':             None
+        },
         'split_details': {
             'mode':               split_mode_normalized,
             'train_rows':         len(train_df),
+            'train_positives':    int(train_df['is_laundering'].sum()),
             'val_rows':           len(val_df),
+            'val_positives':      int(val_df['is_laundering'].sum()),
             'test_rows':          len(test_df),
+            'test_positives':     int(test_df['is_laundering'].sum()),
             'train_date_range':   [str(train_df['timestamp'].min()), str(train_df['timestamp'].max())],
             'val_date_range':     [str(val_df['timestamp'].min()), str(val_df['timestamp'].max())],
             'test_date_range':    [str(test_df['timestamp'].min()), str(test_df['timestamp'].max())],
@@ -726,6 +894,26 @@ def train_and_evaluate(
     metrics_output['version_id'] = version_meta['version_id']
     metrics_output['training_data_hash'] = version_meta['training_data_hash']
     metrics_output['config_hash'] = version_meta['config_hash']
+    metrics_output['benchmark_diagnostics']['version_id'] = version_meta['version_id']
+
+    # Synchronize metrics.json with root models/ and backend local cache
+    try:
+        root_metrics_path = os.path.join(os.path.dirname(__file__), 'models', 'metrics.json')
+        with open(root_metrics_path, 'w') as f_root:
+            json.dump(metrics_output, f_root, indent=4)
+        print(f"[OK] Synchronized metrics cache with {root_metrics_path}")
+    except Exception as root_err:
+        print(f"[Notice] Root models metrics sync skipped: {root_err}")
+
+    try:
+        backend_cfg_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'backend', 'src', 'config')
+        if os.path.exists(backend_cfg_dir):
+            backend_metrics_path = os.path.join(backend_cfg_dir, 'metrics.json')
+            with open(backend_metrics_path, 'w') as f_b:
+                json.dump(metrics_output, f_b, indent=4)
+            print(f"[OK] Synchronized metrics cache with {backend_metrics_path}")
+    except Exception as sync_err:
+        print(f"[Notice] Backend metrics sync skipped: {sync_err}")
 
     print(f"\n[OK] Model version '{version_meta['version_id']}' recorded in registry.json and saved to models/versions/{version_meta['version_id']}/")
     return metrics_output

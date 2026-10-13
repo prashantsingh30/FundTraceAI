@@ -5,7 +5,7 @@ const fs = require('fs');
 
 process.env.NODE_ENV = 'test';
 
-const { connectDB, models } = require('../src/config/db');
+const { connectDB, models, mongoose } = require('../src/config/db');
 const { logAction, verifyAuditLogChain } = require('../src/config/auditLogger');
 const { generateTxId, generateAlertId, generateCaseId } = require('../src/utils/idGenerator');
 const { evaluateTransaction, calculateFusedRiskScore, refreshScenarios } = require('../src/services/scenarioEngine');
@@ -14,6 +14,10 @@ const { generateSTRFromCase } = require('../src/services/regulatoryService');
 test.before(async () => {
   await connectDB();
   refreshScenarios();
+});
+
+test.after(async () => {
+  await mongoose.disconnect();
 });
 
 test('End-to-End Compliance Pipeline: Ingestion -> Scoring -> Alert -> Case -> STR -> Audit Chain', async (t) => {

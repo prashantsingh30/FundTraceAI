@@ -17,6 +17,40 @@ import model_registry
 app = Flask(__name__)
 CORS(app)
 
+def json_sanitize(obj):
+    """
+    Recursively converts any NaN, Inf, NumPy types, or invalid values into JSON-safe standard types.
+    NaN / Inf -> None (serializes to standard JSON null).
+    Leaves genuine 0 and 0.0 intact.
+    """
+    if obj is None:
+        return None
+    if isinstance(obj, (float, np.floating)):
+        if np.isnan(obj) or np.isinf(obj):
+            return None
+        return float(obj)
+    if isinstance(obj, (bool, np.bool_)):
+        return bool(obj)
+    if isinstance(obj, (int, np.integer)):
+        return int(obj)
+    if isinstance(obj, dict):
+        return {str(k): json_sanitize(v) for k, v in obj.items()}
+    if isinstance(obj, (list, tuple)):
+        return [json_sanitize(v) for v in obj]
+    if isinstance(obj, np.ndarray):
+        return json_sanitize(obj.tolist())
+    return obj
+
+_orig_jsonify = jsonify
+def safe_jsonify(*args, **kwargs):
+    if args:
+        if len(args) == 1:
+            return _orig_jsonify(json_sanitize(args[0]))
+        return _orig_jsonify(json_sanitize(list(args)))
+    return _orig_jsonify(json_sanitize(kwargs))
+
+jsonify = safe_jsonify
+
 # ── Global Model & Registry State ─────────────────────────────────────────────
 champion_bundle       = None
 challenger_bundle     = None
@@ -693,10 +727,11 @@ def predict():
                           if champ_name == 'Logistic Regression'
                           else features_df.values)
 
-        prob = float(champ_model.predict_proba(features_input)[0][1])
+        raw_prob = champ_model.predict_proba(features_input)[0][1]
+        prob = float(np.clip(np.nan_to_num(raw_prob, nan=0.0), 0.0, 1.0))
         optimal_threshold = float(champion_bundle.get('metadata', {}).get('optimal_threshold', 0.5))
         prediction = 1 if prob >= optimal_threshold else 0
-        risk_score = int(prob * 100)
+        risk_score = int(np.clip(prob * 100, 0, 100))
 
         # ── 2. Real SHAP Explanation (No Heuristic Fake Values) ───────────────
         shap_explanations = None
@@ -835,7 +870,8 @@ def batch_predict():
                           if champ_name == 'Logistic Regression'
                           else features_df.values)
 
-        probs = champ_model.predict_proba(features_input)[:, 1]
+        raw_probs = champ_model.predict_proba(features_input)[:, 1]
+        probs = np.clip(np.nan_to_num(raw_probs, nan=0.0), 0.0, 1.0)
         optimal_threshold = float(champion_bundle.get('metadata', {}).get('optimal_threshold', 0.5))
         predictions = (probs >= optimal_threshold).astype(int)
 
@@ -850,7 +886,8 @@ def batch_predict():
                 chal_input = (chal_scaler.transform(chal_features_df)
                               if challenger_bundle.get('metadata', {}).get('model_name') == 'Logistic Regression'
                               else chal_features_df.values)
-                shadow_probs = chal_model.predict_proba(chal_input)[:, 1]
+                raw_chal_probs = chal_model.predict_proba(chal_input)[:, 1]
+                shadow_probs = np.clip(np.nan_to_num(raw_chal_probs, nan=0.0), 0.0, 1.0)
             except Exception as s_err:
                 print(f"[Batch Shadow Scoring Error]: {s_err}")
 

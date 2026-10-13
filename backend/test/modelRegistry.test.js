@@ -3,10 +3,14 @@ const assert = require('node:assert/strict');
 const fs = require('fs');
 const path = require('path');
 const { generateModelValidationReportPDF } = require('../src/config/reportGenerator');
-const { connectDB, models } = require('../src/config/db');
+const { connectDB, models, mongoose } = require('../src/config/db');
 
 test.before(async () => {
   await connectDB();
+});
+
+test.after(async () => {
+  await mongoose.disconnect();
 });
 
 test('Model Registry: registry.json exists and has champion and challenger pointers', (t) => {

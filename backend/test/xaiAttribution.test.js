@@ -3,10 +3,17 @@ const assert = require('node:assert/strict');
 const path = require('path');
 const fs = require('fs');
 
-const { connectDB, models } = require('../src/config/db');
+const { connectDB, models, mongoose } = require('../src/config/db');
 
 test.before(async () => {
   await connectDB();
+  if (models.Transaction && typeof models.Transaction.deleteMany === 'function') {
+    await models.Transaction.deleteMany({ transaction_id: 'TX_XAI_TEST_001' });
+  }
+});
+
+test.after(async () => {
+  await mongoose.disconnect();
 });
 
 test('XAI: Heuristic fallback is labeled rule-based with null SHAP', async (t) => {

@@ -1,13 +1,58 @@
 {
-    "champion": "v_20261005_142158",
-    "challenger": "v_20261005_142223",
+    "champion": "v_20261013_184508",
+    "challenger": "v_20261005_142158",
     "shadow_mode_enabled": false,
     "versions": [
+        {
+            "version_id": "v_20261013_190429",
+            "model_name": "Random Forest",
+            "created_at": "2026-10-13T19:04:29.351078",
+            "status": "candidate",
+            "pr_auc": 1.0,
+            "roc_auc": 1.0,
+            "f1_score": 1.0,
+            "optimal_threshold": 0.99,
+            "training_data_hash": "0a49555fddc7...",
+            "config_hash": "2b837f3832ec...",
+            "rows_trained": 10500,
+            "feature_count": 28,
+            "path": "versions/v_20261013_190429"
+        },
+        {
+            "version_id": "v_20261013_185857",
+            "model_name": "Random Forest",
+            "created_at": "2026-10-13T18:58:58.136910",
+            "status": "candidate",
+            "pr_auc": 1.0,
+            "roc_auc": 1.0,
+            "f1_score": 1.0,
+            "optimal_threshold": 0.99,
+            "training_data_hash": "0a49555fddc7...",
+            "config_hash": "2b837f3832ec...",
+            "rows_trained": 10500,
+            "feature_count": 28,
+            "path": "versions/v_20261013_185857"
+        },
+        {
+            "version_id": "v_20261013_184508",
+            "model_name": "Random Forest",
+            "created_at": "2026-10-13T18:45:08.648803",
+            "status": "champion",
+            "pr_auc": 1.0,
+            "roc_auc": 1.0,
+            "f1_score": 0.84375,
+            "optimal_threshold": 0.99,
+            "training_data_hash": "eaea2ea74100...",
+            "config_hash": "2b837f3832ec...",
+            "rows_trained": 10555,
+            "feature_count": 28,
+            "path": "versions/v_20261013_184508"
+        },
         {
             "version_id": "v_20261005_142223",
             "model_name": "Logistic Regression",
             "created_at": "2026-10-05T14:22:23.911233",
-            "status": "challenger",
+            "status": "archived",
             "pr_auc": 1.0,
             "roc_auc": 1.0,
             "f1_score": 0.6666666666666666,
@@ -22,7 +67,7 @@
             "version_id": "v_20261005_142158",
             "model_name": "Logistic Regression",
             "created_at": "2026-10-05T14:21:58.173310",
-            "status": "champion",
+            "status": "challenger",
             "pr_auc": 1.0,
             "roc_auc": 1.0,
             "f1_score": 0.6666666666666666,
@@ -34,5 +79,5 @@
             "path": "versions/v_20261005_142158"
         }
     ],
-    "last_updated": "2026-10-05T14:22:23.913255"
+    "last_updated": "2026-10-13T19:04:29.356769"
 }

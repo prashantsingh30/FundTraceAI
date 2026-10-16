@@ -337,12 +337,41 @@ const Cases = () => {
     }
   };
 
-  const handleExportSTR = (format) => {
+  const handleExportSTR = async (format) => {
     if (!caseSTR) return;
-    if (format === 'pdf') {
-      window.open(`${API_URL}/api/reports/str/${caseSTR.str_id}/pdf`, '_blank');
-    } else {
-      window.open(`${API_URL}/api/reports/str/${caseSTR.str_id}/export?format=${format}`, '_blank');
+    try {
+      const token = localStorage.getItem('aml_token');
+      const endpoint = format === 'pdf'
+        ? `${API_URL}/api/reports/str/${caseSTR.str_id}/pdf`
+        : `${API_URL}/api/reports/str/${caseSTR.str_id}/export?format=${format}`;
+
+      const res = await axios.get(endpoint, {
+        responseType: 'blob',
+        headers: token ? { Authorization: `Bearer ${token}` } : {}
+      });
+
+      const mimeTypes = {
+        pdf: 'application/pdf',
+        xml: 'application/xml',
+        json: 'application/json'
+      };
+
+      const blob = new Blob([res.data], { type: mimeTypes[format] || 'application/octet-stream' });
+      const downloadUrl = window.URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = downloadUrl;
+      link.setAttribute('download', `STR_${caseSTR.str_id}.${format}`);
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      window.URL.revokeObjectURL(downloadUrl);
+    } catch (err) {
+      console.error(`Export failed for STR ${caseSTR.str_id}:`, err);
+      const token = localStorage.getItem('aml_token');
+      const fallbackUrl = format === 'pdf'
+        ? `${API_URL}/api/reports/str/${caseSTR.str_id}/pdf?token=${encodeURIComponent(token || '')}`
+        : `${API_URL}/api/reports/str/${caseSTR.str_id}/export?format=${format}&token=${encodeURIComponent(token || '')}`;
+      window.open(fallbackUrl, '_blank');
     }
   };
 

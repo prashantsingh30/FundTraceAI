@@ -9,22 +9,36 @@ const Navbar = ({ title }) => {
   const { theme, toggleTheme } = useContext(ThemeContext);
   const [systemState, setSystemState] = useState({ db: 'checking', ml: 'checking' });
 
-  // Check backend server & database status
+  // Check backend server & database status with resilient retry & multi-endpoint fallback
   useEffect(() => {
+    let failureCount = 0;
+
     const checkStatus = () => {
-      axios.get(`${API_URL}/api/admin/system-stats`)
+      const token = localStorage.getItem('aml_token');
+      const headers = token ? { Authorization: `Bearer ${token}` } : {};
+
+      // Primary: /api/system-status (open to all authenticated roles)
+      // Secondary: /api/admin/system-stats
+      axios.get(`${API_URL}/api/system-status`, { headers, timeout: 8000 })
+        .catch(() => axios.get(`${API_URL}/api/admin/system-stats`, { headers, timeout: 8000 }))
         .then(res => {
-          if (res.data.success) {
-            const dbMode = res.data.data.database.mode;
-            const mlStatus = res.data.data.ml_model.status ? 'down' : 'up';
+          if (res.data && res.data.success) {
+            failureCount = 0;
+            const dbMode = res.data.data?.database?.mode || '';
+            const dbConnected = res.data.data?.database?.connected !== false;
+            const mlStatus = res.data.data?.ml_model?.status ? 'down' : 'up';
             setSystemState({
-              db: dbMode.includes('Fallback') ? 'fallback' : 'connected',
+              db: !dbConnected ? 'disconnected' : (dbMode.includes('Fallback') ? 'fallback' : 'connected'),
               ml: mlStatus === 'up' ? 'connected' : 'disconnected'
             });
           }
         })
         .catch(() => {
-          setSystemState({ db: 'disconnected', ml: 'disconnected' });
+          failureCount += 1;
+          // Avoid transient flickering during long queries/training; only declare disconnected after 2 consecutive failures
+          if (failureCount >= 2) {
+            setSystemState({ db: 'disconnected', ml: 'disconnected' });
+          }
         });
     };
 

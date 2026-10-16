@@ -85,21 +85,42 @@ const getSystemStats = async (req, res) => {
       }
     }
 
-    // Counts
-    const userCount = await models.User.countDocuments({});
-    const transactionCount = await models.Transaction.countDocuments({});
-    const alertCount = await models.Alert.countDocuments({});
-    const openCaseCount = await models.Case.countDocuments({ status: 'Open' });
-    
-    // Fallback status
-    const dbFallback = require('../config/db').isFallback();
+    // Database health & resilient mode check
+    const { isFallback, checkDbHealth } = require('../config/db');
+    const dbFallback = isFallback();
+    const dbHealth = checkDbHealth ? await checkDbHealth() : {
+      mode: dbFallback ? 'Fallback (Local JSON Files)' : 'MongoDB Server',
+      status: 'Connected',
+      connected: true
+    };
+
+    // Fast metadata counts (avoid full Atlas table scans that saturate sockets)
+    let userCount = 0;
+    let transactionCount = 0;
+    let alertCount = 0;
+    let openCaseCount = 0;
+
+    try {
+      if (!dbFallback && models.Transaction.estimatedDocumentCount) {
+        transactionCount = await models.Transaction.estimatedDocumentCount().catch(() => models.Transaction.countDocuments({}));
+        alertCount = await models.Alert.estimatedDocumentCount().catch(() => models.Alert.countDocuments({}));
+      } else {
+        transactionCount = await models.Transaction.countDocuments({}).catch(() => 0);
+        alertCount = await models.Alert.countDocuments({}).catch(() => 0);
+      }
+      userCount = await models.User.countDocuments({}).catch(() => 0);
+      openCaseCount = await models.Case.countDocuments({ status: 'Open' }).catch(() => 0);
+    } catch (countErr) {
+      console.warn('[getSystemStats] Non-fatal document count reading warning:', countErr.message);
+    }
 
     return res.json({
       success: true,
       data: {
         database: {
-          mode: dbFallback ? 'Fallback (Local JSON Files)' : 'MongoDB Server',
-          status: 'Connected'
+          mode: dbHealth.mode,
+          status: dbHealth.status,
+          connected: dbHealth.connected !== false
         },
         counts: {
           users: userCount,

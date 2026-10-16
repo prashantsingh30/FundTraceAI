@@ -120,7 +120,9 @@ router.get('/admin/users', authenticateToken, authorizeRoles('Admin'), admin.get
 router.delete('/admin/users/:username', authenticateToken, authorizeRoles('Admin'), admin.deleteUser);
 router.get('/admin/audit-logs', authenticateToken, authorizeRoles('Admin', 'Auditor'), admin.getAuditLogs);
 router.get('/admin/audit-logs/verify', authenticateToken, authorizeRoles('Admin', 'Auditor'), admin.verifyAuditLogs);
-router.get('/admin/system-stats', authenticateToken, authorizeRoles('Admin', 'Auditor', 'Investigator'), admin.getSystemStats);
+// System status available to all authenticated roles & health monitors
+router.get('/system-status', authenticateToken, admin.getSystemStats);
+router.get('/admin/system-stats', authenticateToken, admin.getSystemStats);
 router.get('/admin/feedback-metrics', authenticateToken, authorizeRoles('Admin', 'Auditor', 'Investigator'), admin.getFeedbackMetrics);
 router.post('/admin/train', authenticateToken, authorizeRoles('Admin', 'Investigator'), admin.trainModel);
 router.get('/admin/risk-config', authenticateToken, authorizeRoles('Admin'), admin.getRiskConfig);

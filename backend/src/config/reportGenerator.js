@@ -337,17 +337,20 @@ function generateCTRPDF(ctrObj, stream) {
 
   let txY = 310;
   (ctrObj.transactions || []).forEach((t, idx) => {
+    if (txY > 670) {
+      doc.addPage();
+      txY = 50;
+    }
     doc.fillColor('#111827').fontSize(8.5).font('Helvetica-Bold')
-       .text(`${idx + 1}. Tx ${t.transaction_id}`, 50, txY);
+       .text(`${idx + 1}. Tx ${t.transaction_id || 'N/A'}`, 50, txY);
     doc.font('Helvetica')
-       .text(`Timestamp: ${t.timestamp ? new Date(t.timestamp).toLocaleString('en-IN') : 'N/A'} | Account: ${t.sender_account || ctrObj.account_id}`, 50, txY + 11);
+       .text(`Timestamp: ${t.timestamp ? new Date(t.timestamp).toLocaleString('en-IN') : 'N/A'} | Account: ${t.sender_account || ctrObj.account_id || 'N/A'}`, 50, txY + 11);
     doc.fillColor('#065f46').font('Helvetica-Bold')
        .text(`INR ${(t.amount || 0).toLocaleString('en-IN')}`, 420, txY + 11);
 
     drawLine(txY + 25);
     txY += 30;
   });
-
   // Regulatory Notice Footer
   const footY = 730;
   drawLine(footY - 20);

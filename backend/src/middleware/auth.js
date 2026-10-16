@@ -3,7 +3,8 @@ const { models } = require('../config/db');
 
 const authenticateToken = (req, res, next) => {
   const authHeader = req.headers['authorization'];
-  const token = authHeader && authHeader.split(' ')[1]; // Bearer TOKEN
+  // Support Bearer Authorization header and query parameter (for direct file downloads/browser tabs)
+  const token = (authHeader && authHeader.split(' ')[1]) || req.query.token || req.query.auth_token;
 
   if (!token) {
     return res.status(401).json({ success: false, error: 'Access token required. Please login.' });

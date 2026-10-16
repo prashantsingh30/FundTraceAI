@@ -24,7 +24,8 @@ app.use(helmet({
 app.use(cors({
   origin: '*', // In production, replace with specific React app domains
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization']
+  allowedHeaders: ['Content-Type', 'Authorization'],
+  exposedHeaders: ['Content-Disposition']
 }));
 
 // Request body parsers

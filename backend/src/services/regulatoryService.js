@@ -333,98 +333,142 @@ async function generateSTRFromCase(caseId, user) {
  * Aggregates cash deposits/withdrawals exceeding the statutory CTR threshold
  */
 async function generateCTRReport(options = {}) {
-  const period = options.period || new Date().toISOString().substring(0, 7); // e.g. "2026-10"
-  const threshold = options.threshold_inr || options.threshold || getCtrThreshold(); // 1,000,000 INR
+  // If period is 'all', null, undefined, or empty, scan across all available months
+  const requestedPeriod = (options.period && options.period !== 'all') ? options.period : null;
+  const threshold = Number(options.threshold_inr || options.threshold) || getCtrThreshold(); // default 1,000,000 INR
   const currentUser = options.user?.username || 'System';
 
-  // 1. Fetch cash transactions
-  const allTxs = await models.Transaction.find({});
-  const cashMethods = ['Cash Deposit', 'Cash', 'ATM', 'Cash Withdrawal'];
+  // 1. Efficient projection query for cash transactions
+  const cashRegex = /cash|atm/i;
+  let allCashTxs = [];
 
-  const filteredCashTxs = allTxs.filter(t => {
-    const isCash = cashMethods.includes(t.payment_method) || (t.category && t.category.toLowerCase().includes('cash'));
-    if (!isCash) return false;
-    
-    // Check period if specified
-    if (period && t.timestamp) {
-      try {
-        const tsStr = (t.timestamp instanceof Date ? t.timestamp.toISOString() : new Date(t.timestamp).toISOString());
-        return tsStr.startsWith(period);
-      } catch (e) {
-        return false;
-      }
+  try {
+    if (models.Transaction.find) {
+      allCashTxs = await models.Transaction.find({
+        $or: [
+          { payment_method: { $regex: cashRegex } },
+          { category: { $regex: cashRegex } }
+        ]
+      })
+      .select('transaction_id amount amount_inr sender_account sender_name receiver_account payment_method category timestamp createdAt customer_id')
+      .lean();
+    }
+  } catch (queryErr) {
+    console.warn('[generateCTRReport] Filtered query fallback to full scan:', queryErr.message);
+    const allTxs = await models.Transaction.find({});
+    allCashTxs = allTxs.filter(t => 
+      (t.payment_method && cashRegex.test(t.payment_method)) || 
+      (t.category && cashRegex.test(t.category))
+    );
+  }
+
+  // Filter by requested period if explicitly provided (e.g. "2025-06" or "2026-10")
+  const filteredCashTxs = allCashTxs.filter(t => {
+    if (requestedPeriod) {
+      const rawTs = t.timestamp || t.createdAt;
+      if (!rawTs) return false;
+      const tsStr = rawTs instanceof Date ? rawTs.toISOString() : String(rawTs);
+      return tsStr.startsWith(requestedPeriod);
     }
     return true;
   });
 
-  // 2. Group cash transactions by Customer / Sender Account
+  // 2. Group cash transactions by (Customer/Account + Calendar Month)
   const groups = {};
   for (const tx of filteredCashTxs) {
-    const key = tx.customer_id || tx.sender_account || 'ACC_UNKNOWN';
-    if (!groups[key]) {
-      groups[key] = {
-        key,
+    const rawTs = tx.timestamp || tx.createdAt || new Date().toISOString();
+    const txPeriod = (rawTs instanceof Date ? rawTs.toISOString() : String(rawTs)).substring(0, 7);
+    const accKey = tx.customer_id || tx.sender_account || 'ACC_UNKNOWN';
+    // When period is 'all', group per calendar month per account; when specific period, key on account
+    const groupKey = requestedPeriod ? accKey : `${accKey}__${txPeriod}`;
+
+    if (!groups[groupKey]) {
+      groups[groupKey] = {
+        groupKey,
+        period: requestedPeriod || txPeriod,
         customer_id: tx.customer_id || null,
         customer_name: tx.sender_name || 'Cash Depositor',
-        account_id: tx.sender_account || key,
+        account_id: tx.sender_account || accKey,
         total_cash: 0,
         transactions: []
       };
     }
-    groups[key].total_cash += (parseFloat(tx.amount) || 0);
-    groups[key].transactions.push({
+
+    const txAmount = parseFloat(tx.amount_inr || tx.amount) || 0;
+    groups[groupKey].total_cash += txAmount;
+    groups[groupKey].transactions.push({
       transaction_id: tx.transaction_id,
       amount: tx.amount,
+      amount_inr: tx.amount_inr || tx.amount,
       sender_account: tx.sender_account,
       sender_name: tx.sender_name,
       receiver_account: tx.receiver_account,
-      payment_method: tx.payment_method,
+      payment_method: tx.payment_method || 'Cash Deposit',
       timestamp: tx.timestamp || tx.createdAt
     });
   }
 
-  // 3. Filter groups exceeding the threshold
+  // 3. Filter groups exceeding the statutory threshold
   const qualifyingGroups = Object.values(groups).filter(g => g.total_cash >= threshold);
 
   const generatedReports = [];
-  const dueDate = getCtrDueDate(new Date());
+  const now = new Date().toISOString();
 
   for (const group of qualifyingGroups) {
-    const ctrId = generateCtrId();
-    const now = new Date().toISOString();
+    const targetPeriod = group.period;
+    const dueDate = getCtrDueDate(new Date());
 
-    const ctrDoc = {
-      ctr_id: ctrId,
-      period,
-      customer_id: group.customer_id,
-      customer_name: group.customer_name,
-      account_id: group.account_id,
-      total_cash_amount: group.total_cash,
-      transaction_count: group.transactions.length,
-      transactions: group.transactions,
-      status: 'Generated',
-      generated_by: currentUser,
-      approved_by: null,
-      acknowledgement_reference: null,
-      filing_date: null,
-      due_date: dueDate,
-      createdAt: now,
-      updatedAt: now
-    };
+    // Check if CTR already exists for this account and period to avoid duplicate report records
+    let existingCTR = null;
+    try {
+      existingCTR = await models.CTRReport.findOne({ account_id: group.account_id, period: targetPeriod });
+    } catch (_) {}
 
-    const savedCTR = await models.CTRReport.create(ctrDoc);
-    generatedReports.push(savedCTR);
+    if (existingCTR) {
+      existingCTR.total_cash_amount = group.total_cash;
+      existingCTR.transaction_count = group.transactions.length;
+      existingCTR.transactions = group.transactions;
+      existingCTR.customer_name = group.customer_name || existingCTR.customer_name;
+      existingCTR.customer_id = group.customer_id || existingCTR.customer_id;
+      existingCTR.updatedAt = new Date();
+      await existingCTR.save();
+      generatedReports.push(existingCTR);
+    } else {
+      const ctrId = generateCtrId();
+      const ctrDoc = {
+        ctr_id: ctrId,
+        period: targetPeriod,
+        customer_id: group.customer_id,
+        customer_name: group.customer_name,
+        account_id: group.account_id,
+        total_cash_amount: group.total_cash,
+        transaction_count: group.transactions.length,
+        transactions: group.transactions,
+        status: 'Generated',
+        generated_by: currentUser,
+        approved_by: null,
+        acknowledgement_reference: null,
+        filing_date: null,
+        due_date: dueDate,
+        createdAt: now,
+        updatedAt: now
+      };
+
+      const savedCTR = await models.CTRReport.create(ctrDoc);
+      generatedReports.push(savedCTR);
+    }
   }
 
+  const finalReportingPeriod = requestedPeriod || (generatedReports.length > 0 ? generatedReports[0].period : 'all');
   await logAction(
     currentUser,
     options.user?.role || 'System',
     'CTR_REPORT_GENERATED',
     '127.0.0.1',
-    `Generated ${generatedReports.length} CTR filings for period ${period} (Threshold: ₹${threshold.toLocaleString('en-IN')})`
+    'Generated ' + generatedReports.length + ' CTR filings for period ' + finalReportingPeriod + ' (Threshold: INR ' + threshold.toLocaleString('en-IN') + ')'
   );
 
-  generatedReports.period = period;
+  generatedReports.period = finalReportingPeriod;
   generatedReports.threshold = threshold;
   generatedReports.total_cash_transactions_scanned = filteredCashTxs.length;
   generatedReports.reports_generated_count = generatedReports.length;

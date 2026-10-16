@@ -47,11 +47,10 @@ const Reports = () => {
   const [selectedSTR, setSelectedSTR] = useState(null);
   const [selectedCTR, setSelectedCTR] = useState(null);
   const [isGenerateCtrOpen, setIsGenerateCtrOpen] = useState(false);
-  const [ctrPeriodInput, setCtrPeriodInput] = useState(() => {
-    const d = new Date();
-    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
-  });
+  const [ctrPeriodMode, setCtrPeriodMode] = useState('all'); // 'all' | 'specific'
+  const [ctrPeriodInput, setCtrPeriodInput] = useState('2025-06');
   const [ctrThresholdInput, setCtrThresholdInput] = useState(1000000);
+  const [isDownloading, setIsDownloading] = useState(false);
   const [isAckModalOpen, setIsAckModalOpen] = useState(false);
   const [targetSTRForFiling, setTargetSTRForFiling] = useState(null);
   const [ackRefInput, setAckRefInput] = useState('');
@@ -139,24 +138,68 @@ const Reports = () => {
   const handleGenerateCTR = async (e) => {
     e.preventDefault();
     try {
+      setLoadingCTR(true);
+      const targetPeriod = ctrPeriodMode === 'all' ? 'all' : ctrPeriodInput;
       const res = await axios.post(`${API_URL}/api/reports/ctr/generate`, {
-        period: ctrPeriodInput,
+        period: targetPeriod,
         threshold_inr: Number(ctrThresholdInput)
       });
-      alert(`CTR aggregation generated: ${res.data.count} report(s) compiled.`);
+      const count = res.data?.count || 0;
+      if (count > 0) {
+        alert(`CTR Cash Aggregation Success: Compiled ${count} qualifying report(s) above statutory cash threshold.`);
+      } else {
+        alert(`CTR Aggregation Complete: Scanned cash transactions, but no accounts accumulated cash deposits >= INR ${Number(ctrThresholdInput).toLocaleString('en-IN')} for the selected period (${targetPeriod === 'all' ? 'All Months' : targetPeriod}). Try choosing "All Available Periods" or adjusting the threshold.`);
+      }
       setIsGenerateCtrOpen(false);
       fetchCTRs();
     } catch (err) {
       alert("Failed to generate CTR batch: " + (err.response?.data?.error || err.message));
+    } finally {
+      setLoadingCTR(false);
     }
   };
 
-  // Export handlers
-  const handleExport = (type, id, format) => {
-    const url = format === 'pdf'
-      ? `${API_URL}/api/reports/${type}/${id}/pdf`
-      : `${API_URL}/api/reports/${type}/${id}/export?format=${format}`;
-    window.open(url, '_blank');
+  // Export handlers: Authenticated Blob Download with direct link fallback
+  const handleExport = async (type, id, format) => {
+    if (!id) return;
+    setIsDownloading(true);
+    try {
+      const token = localStorage.getItem('aml_token');
+      const endpoint = format === 'pdf'
+        ? `${API_URL}/api/reports/${type}/${id}/pdf`
+        : `${API_URL}/api/reports/${type}/${id}/export?format=${format}`;
+
+      const res = await axios.get(endpoint, {
+        responseType: 'blob',
+        headers: token ? { Authorization: `Bearer ${token}` } : {}
+      });
+
+      const mimeTypes = {
+        pdf: 'application/pdf',
+        xml: 'application/xml',
+        json: 'application/json'
+      };
+
+      const blob = new Blob([res.data], { type: mimeTypes[format] || 'application/octet-stream' });
+      const downloadUrl = window.URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = downloadUrl;
+      link.setAttribute('download', `${type.toUpperCase()}_${id}.${format}`);
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      window.URL.revokeObjectURL(downloadUrl);
+    } catch (err) {
+      console.error(`Export failed for ${type} ${id}:`, err);
+      // Fallback: Open in new window passing query token for authenticated direct stream
+      const token = localStorage.getItem('aml_token');
+      const fallbackUrl = format === 'pdf'
+        ? `${API_URL}/api/reports/${type}/${id}/pdf?token=${encodeURIComponent(token || '')}`
+        : `${API_URL}/api/reports/${type}/${id}/export?format=${format}&token=${encodeURIComponent(token || '')}`;
+      window.open(fallbackUrl, '_blank');
+    } finally {
+      setIsDownloading(false);
+    }
   };
 
   // Filtered STR list

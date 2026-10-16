@@ -863,16 +863,93 @@ async function seedDefaultScenarios() {
   }
 }
 
+let mongooseListenersAttached = false;
+let isReconnecting = false;
+let isIntentionalDisconnect = false;
+
+// Wrap mongoose.disconnect to distinguish intentional test/shutdown teardown from network drops
+const origDisconnect = mongoose.disconnect.bind(mongoose);
+mongoose.disconnect = async function(...args) {
+  isIntentionalDisconnect = true;
+  return origDisconnect(...args);
+};
+
+function attachMongooseListeners() {
+  if (mongooseListenersAttached) return;
+  mongooseListenersAttached = true;
+
+  mongoose.connection.on('disconnected', () => {
+    if (isIntentionalDisconnect || process.env.NODE_ENV === 'test') {
+      return;
+    }
+    console.warn('[MongoDB] Connection lost or closed by cluster. Initiating automatic reconnect...');
+    if (!isReconnecting && !isFallbackMode) {
+      isReconnecting = true;
+      const timer = setTimeout(async () => {
+        try {
+          if (mongoose.connection.readyState === 0 && !isIntentionalDisconnect) {
+            await connectDB();
+          }
+        } catch (err) {
+          console.warn('[MongoDB Auto-Reconnect Warning]:', err.message);
+        } finally {
+          isReconnecting = false;
+        }
+      }, 2000);
+      if (timer && timer.unref) timer.unref();
+    }
+  });
+
+  mongoose.connection.on('error', (err) => {
+    console.error('[MongoDB Driver Error]:', err.message);
+  });
+
+  mongoose.connection.on('reconnected', () => {
+    console.log('[MongoDB] Successfully re-established connection with cluster.');
+    isFallbackMode = false;
+  });
+}
+
+async function checkDbHealth() {
+  if (isFallbackMode) {
+    return { mode: 'Fallback (Local JSON Files)', status: 'Fallback Active', connected: true };
+  }
+  const state = mongoose.connection.readyState;
+  if (state === 1) {
+    return { mode: 'MongoDB Server', status: 'Connected', connected: true };
+  } else if (state === 2) {
+    return { mode: 'MongoDB Server', status: 'Connecting', connected: true };
+  } else {
+    if (!isReconnecting) {
+      connectDB().catch(() => {});
+    }
+    return { mode: 'MongoDB Server', status: 'Reconnecting', connected: false };
+  }
+}
+
 async function connectDB() {
   const uri = process.env.MONGODB_URI || 'mongodb://127.0.0.1:27017/aml_db';
   try {
     const isAtlas = uri.startsWith('mongodb+srv://') || uri.includes('.mongodb.net');
     const sanitizedUri = uri.replace(/\/\/([^:]+):([^@]+)@/, '//$1:****@');
     console.log(`Connecting to MongoDB at: ${sanitizedUri}...`);
-    // Connect with longer timeout for Atlas/cloud networks (15s), shorter for local (5s)
-    await mongoose.connect(uri, {
-      serverSelectionTimeoutMS: isAtlas ? 15000 : 5000
-    });
+    isIntentionalDisconnect = false;
+    attachMongooseListeners();
+
+    // Production pooling & keep-alive options to avoid Atlas idle drops and socket timeouts
+    const connectionOptions = {
+      serverSelectionTimeoutMS: isAtlas ? 15000 : 5000,
+      socketTimeoutMS: 45000,
+      connectTimeoutMS: 15000,
+      maxPoolSize: isAtlas ? 20 : 10,
+      minPoolSize: isAtlas ? 2 : 1,
+      maxIdleTimeMS: 30000,
+      heartbeatFrequencyMS: 10000,
+      retryWrites: true,
+      retryReads: true
+    };
+    await mongoose.connect(uri, connectionOptions);
+    isFallbackMode = false;
     console.log("Successfully connected to MongoDB server.");
     
     // Initialize Mongoose Models
@@ -1144,6 +1221,7 @@ async function connectDB() {
 // Export models as a getter to support late-binding after connection attempts
 module.exports = {
   connectDB,
+  checkDbHealth,
   mongoose,
   isFallback: () => isFallbackMode,
   models: {

@@ -360,7 +360,7 @@ async function getCTRs(req, res) {
   try {
     const { period, status, overdue } = req.query;
     let query = {};
-    if (period) query.period = period;
+    if (period && period !== 'all') query.period = period;
     if (status) query.status = status;
 
     const ctrs = await models.CTRReport.find(query).sort({ createdAt: -1 });
